@@ -8,7 +8,7 @@ import (
 
 	"github.com/urfave/cli"
 
-	opservice "github.com/mantlenetworkio/mantle/mt-service"
+	mtservice "github.com/mantlenetworkio/mantle/mt-service"
 )
 
 const (
@@ -34,19 +34,19 @@ func CLIFlagsWithFlagPrefix(envPrefix string, flagPrefix string) []cli.Flag {
 			Name:   prefixFunc(TLSCaCertFlagName),
 			Usage:  "tls ca cert path",
 			Value:  "tls/ca.crt",
-			EnvVar: opservice.PrefixEnvVar(envPrefix, "TLS_CA"),
+			EnvVar: mtservice.PrefixEnvVar(envPrefix, "TLS_CA"),
 		},
 		cli.StringFlag{
 			Name:   prefixFunc(TLSCertFlagName),
 			Usage:  "tls cert path",
 			Value:  "tls/tls.crt",
-			EnvVar: opservice.PrefixEnvVar(envPrefix, "TLS_CERT"),
+			EnvVar: mtservice.PrefixEnvVar(envPrefix, "TLS_CERT"),
 		},
 		cli.StringFlag{
 			Name:   prefixFunc(TLSKeyFlagName),
 			Usage:  "tls key",
 			Value:  "tls/tls.key",
-			EnvVar: opservice.PrefixEnvVar(envPrefix, "TLS_KEY"),
+			EnvVar: mtservice.PrefixEnvVar(envPrefix, "TLS_KEY"),
 		},
 	}
 }

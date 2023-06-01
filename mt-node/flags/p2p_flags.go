@@ -25,12 +25,48 @@ var (
 		Required: false,
 		EnvVar:   p2pEnv("NO_DISCOVERY"),
 	}
+	PeerScoring = cli.StringFlag{
+		Name: "p2p.scoring.peers",
+		Usage: "Sets the peer scoring strategy for the P2P stack. " +
+			"Can be one of: none or light." +
+			"Custom scoring strategies can be defined in the config file.",
+		Required: false,
+		Value:    "none",
+		EnvVar:   p2pEnv("PEER_SCORING"),
+	}
+	PeerScoreBands = cli.StringFlag{
+		Name: "p2p.score.bands",
+		Usage: "Sets the peer score bands used primarily for peer score metrics. " +
+			"Should be provided in following format: <threshold>:<label>;<threshold>:<label>;..." +
+			"For example: -40:graylist;-20:restricted;0:nopx;20:friend;",
+		Required: false,
+		Value:    "-40:graylist;-20:restricted;0:nopx;20:friend;",
+		EnvVar:   p2pEnv("SCORE_BANDS"),
+	}
+
+	// Banning Flag - whether or not we want to act on the scoring
+	Banning = cli.BoolFlag{
+		Name:     "p2p.ban.peers",
+		Usage:    "Enables peer banning. This should ONLY be enabled once certain peer scoring is working correctly.",
+		Required: false,
+		EnvVar:   p2pEnv("PEER_BANNING"),
+	}
+
+	TopicScoring = cli.StringFlag{
+		Name: "p2p.scoring.topics",
+		Usage: "Sets the topic scoring strategy. " +
+			"Can be one of: none or light." +
+			"Custom scoring strategies can be defined in the config file.",
+		Required: false,
+		Value:    "none",
+		EnvVar:   p2pEnv("TOPIC_SCORING"),
+	}
 	P2PPrivPath = cli.StringFlag{
 		Name: "p2p.priv.path",
 		Usage: "Read the hex-encoded 32-byte private key for the peer ID from this txt file. Created if not already exists." +
 			"Important to persist to keep the same network identity after restarting, maintaining the previous advertised identity.",
 		Required:  false,
-		Value:     "mtnode_p2p_priv.txt",
+		Value:     "opnode_p2p_priv.txt",
 		EnvVar:    p2pEnv("PRIV_PATH"),
 		TakesFile: true,
 	}
@@ -146,10 +182,10 @@ var (
 	}
 	UserAgent = cli.StringFlag{
 		Name:     "p2p.useragent",
-		Usage:    "User-agent string to share via LibP2P identify. If empty it defaults to 'mantle'.",
+		Usage:    "User-agent string to share via LibP2P identify. If empty it defaults to 'optimism'.",
 		Hidden:   true,
 		Required: false,
-		Value:    "mantle",
+		Value:    "optimism",
 		EnvVar:   p2pEnv("AGENT"),
 	}
 	TimeoutNegotiation = cli.DurationFlag{
@@ -183,7 +219,7 @@ var (
 			"Warning: a copy of the priv network key of the local peer will be persisted here.", // TODO: bad design of libp2p, maybe we can avoid this from happening
 		Required:  false,
 		TakesFile: true,
-		Value:     "mtnode_peerstore_db",
+		Value:     "opnode_peerstore_db",
 		EnvVar:    p2pEnv("PEERSTORE_PATH"),
 	}
 	DiscoveryPath = cli.StringFlag{
@@ -191,7 +227,7 @@ var (
 		Usage:     "Discovered ENRs are persisted in a database to recover from a restart without having to bootstrap the discovery process again. Set to 'memory' to never persist the peerstore.",
 		Required:  false,
 		TakesFile: true,
-		Value:     "mtnode_discovery_db",
+		Value:     "opnode_discovery_db",
 		EnvVar:    p2pEnv("DISCOVERY_PATH"),
 	}
 	SequencerP2PKeyFlag = cli.StringFlag{
@@ -240,6 +276,12 @@ var (
 		Hidden:   true,
 		EnvVar:   p2pEnv("GOSSIP_FLOOD_PUBLISH"),
 	}
+	SyncReqRespFlag = cli.BoolFlag{
+		Name:     "p2p.sync.req-resp",
+		Usage:    "Enables experimental P2P req-resp alternative sync method, on both server and client side.",
+		Required: false,
+		EnvVar:   p2pEnv("SYNC_REQ_RESP"),
+	}
 )
 
 // None of these flags are strictly required.
@@ -249,6 +291,10 @@ var p2pFlags = []cli.Flag{
 	NoDiscovery,
 	P2PPrivPath,
 	P2PPrivRaw,
+	PeerScoring,
+	PeerScoreBands,
+	Banning,
+	TopicScoring,
 	ListenIP,
 	ListenTCPPort,
 	ListenUDPPort,
@@ -275,4 +321,5 @@ var p2pFlags = []cli.Flag{
 	GossipMeshDhiFlag,
 	GossipMeshDlazyFlag,
 	GossipFloodPublishFlag,
+	SyncReqRespFlag,
 }

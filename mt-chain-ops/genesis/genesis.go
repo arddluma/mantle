@@ -15,7 +15,8 @@ import (
 	"github.com/mantlenetworkio/mantle/mt-bindings/predeploys"
 )
 
-const defaultL2GasLimit = 15_000_000
+// defaultL2GasLimit represents the default gas limit for an L2 block.
+const defaultL2GasLimit = 30_000_000
 
 // NewL2Genesis will create a new L2 genesis
 func NewL2Genesis(config *DeployConfig, block *types.Block) (*core.Genesis, error) {
@@ -38,7 +39,6 @@ func NewL2Genesis(config *DeployConfig, block *types.Block) (*core.Genesis, erro
 		DAOForkBlock:                  nil,
 		DAOForkSupport:                false,
 		EIP150Block:                   big.NewInt(0),
-		EIP150Hash:                    common.Hash{},
 		EIP155Block:                   big.NewInt(0),
 		EIP158Block:                   big.NewInt(0),
 		ByzantiumBlock:                big.NewInt(0),
@@ -108,7 +108,6 @@ func NewL1Genesis(config *DeployConfig) (*core.Genesis, error) {
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
 		EIP150Block:         big.NewInt(0),
-		EIP150Hash:          common.Hash{},
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),

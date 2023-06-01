@@ -8,12 +8,12 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mantlenetworkio/mantle/mt-bindings/predeploys"
-	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis/migration"
+	"github.com/mantlenetworkio/mantle/mt-chain-ops/crossdomain"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/mantlenetworkio/mantle/mt-bindings/predeploys"
 )
 
 var (
@@ -25,7 +25,7 @@ var (
 	// iterator's callback.
 	ErrStopIteration = errors.New("iteration stopped")
 
-	// MintTopic is the topic for mint events on BVM ETH.
+	// MintTopic is the topic for mint events on OVM ETH.
 	MintTopic = common.HexToHash("0x0f6798a560793a54c3bcfe86a93cde1e73087d944c0ea20544137d4121396885")
 )
 
@@ -105,7 +105,7 @@ func IterateAllowanceList(r io.Reader, cb AllowanceCB) error {
 func IterateMintEvents(db ethdb.Database, headNum uint64, cb AddressCBWithHead, progressCb func(uint64)) error {
 	for headNum > 0 {
 		hash := rawdb.ReadCanonicalHash(db, headNum)
-		receipts, err := migration.ReadLegacyReceipts(db, hash, headNum)
+		receipts, err := crossdomain.ReadLegacyReceipts(db, hash, headNum)
 		if err != nil {
 			return err
 		}

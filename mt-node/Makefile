@@ -8,11 +8,11 @@ LDFLAGSSTRING +=-X github.com/mantlenetworkio/mantle/mt-node/version.Version=$(V
 LDFLAGSSTRING +=-X github.com/mantlenetworkio/mantle/mt-node/version.Meta=$(VERSION_META)
 LDFLAGS := -ldflags "$(LDFLAGSSTRING)"
 
-mt-node:
-	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v $(LDFLAGS) -o ./bin/mt-node ./cmd/main.go
+op-node:
+	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v $(LDFLAGS) -o ./bin/op-node ./cmd/main.go
 
 clean:
-	rm bin/mt-node
+	rm bin/op-node
 
 test:
 	go test -v ./...
@@ -39,7 +39,7 @@ fuzz:
 
 
 .PHONY: \
-	mt-node \
+	op-node \
 	clean \
 	test \
 	lint \

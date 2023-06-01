@@ -3,41 +3,52 @@ package batcher
 import (
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli"
 
 	"github.com/mantlenetworkio/mantle/mt-l1batcher/flags"
+	"github.com/mantlenetworkio/mantle/mt-l1batcher/metrics"
 	"github.com/mantlenetworkio/mantle/mt-l1batcher/rpc"
 	"github.com/mantlenetworkio/mantle/mt-node/rollup"
 	"github.com/mantlenetworkio/mantle/mt-node/sources"
 	oplog "github.com/mantlenetworkio/mantle/mt-service/log"
-	mtmetrics "github.com/mantlenetworkio/mantle/mt-service/metrics"
-	mtpprof "github.com/mantlenetworkio/mantle/mt-service/pprof"
+	opmetrics "github.com/mantlenetworkio/mantle/mt-service/metrics"
+	oppprof "github.com/mantlenetworkio/mantle/mt-service/pprof"
 	"github.com/mantlenetworkio/mantle/mt-service/txmgr"
-	opsigner "github.com/mantlenetworkio/mantle/mt-signer/client"
 )
 
 type Config struct {
-	log             log.Logger
-	L1Client        *ethclient.Client
-	L2Client        *ethclient.Client
-	RollupNode      *sources.RollupClient
-	PollInterval    time.Duration
-	TxManagerConfig txmgr.Config
-	From            common.Address
+	log        log.Logger
+	metr       metrics.Metricer
+	L1Client   *ethclient.Client
+	L2Client   *ethclient.Client
+	RollupNode *sources.RollupClient
+	TxManager  txmgr.TxManager
+
+	NetworkTimeout         time.Duration
+	PollInterval           time.Duration
+	MaxPendingTransactions uint64
 
 	// RollupConfig is queried at startup
 	Rollup *rollup.Config
 
-	// Channel creation parameters
+	// Channel builder parameters
 	Channel ChannelConfig
 }
 
-type CLIConfig struct {
-	/* Required Params */
+// Check ensures that the [Config] is valid.
+func (c *Config) Check() error {
+	if err := c.Rollup.Check(); err != nil {
+		return err
+	}
+	if err := c.Channel.Check(); err != nil {
+		return err
+	}
+	return nil
+}
 
+type CLIConfig struct {
 	// L1EthRpc is the HTTP provider URL for L1.
 	L1EthRpc string
 
@@ -66,34 +77,9 @@ type CLIConfig struct {
 	// and creating a new batch.
 	PollInterval time.Duration
 
-	// NumConfirmations is the number of confirmations which we will wait after
-	// appending new batches.
-	NumConfirmations uint64
-
-	// SafeAbortNonceTooLowCount is the number of ErrNonceTooLowObservations
-	// required to give up on a tx at a particular nonce without receiving
-	// confirmation.
-	SafeAbortNonceTooLowCount uint64
-
-	// ResubmissionTimeout is time we will wait before resubmitting a
-	// transaction.
-	ResubmissionTimeout time.Duration
-
-	// Mnemonic is the HD seed used to derive the wallet private keys for both
-	// the sequence and proposer. Must be used in conjunction with
-	// SequencerHDPath and ProposerHDPath.
-	Mnemonic string
-
-	// SequencerHDPath is the derivation path used to obtain the private key for
-	// batched submission of sequencer transactions.
-	SequencerHDPath string
-
-	// PrivateKey is the private key used to submit sequencer transactions.
-	PrivateKey string
-
-	RPCConfig rpc.CLIConfig
-
-	/* Optional Params */
+	// MaxPendingTransactions is the maximum number of concurrent pending
+	// transactions sent to the transaction manager.
+	MaxPendingTransactions uint64
 
 	// MaxL1TxSize is the maximum size of a batch tx submitted to L1.
 	MaxL1TxSize uint64
@@ -110,14 +96,11 @@ type CLIConfig struct {
 
 	Stopped bool
 
-	LogConfig oplog.CLIConfig
-
-	MetricsConfig mtmetrics.CLIConfig
-
-	PprofConfig mtpprof.CLIConfig
-
-	// SignerConfig contains the client config for mt-signer service
-	SignerConfig opsigner.CLIConfig
+	TxMgrConfig   txmgr.CLIConfig
+	RPCConfig     rpc.CLIConfig
+	LogConfig     oplog.CLIConfig
+	MetricsConfig opmetrics.CLIConfig
+	PprofConfig   oppprof.CLIConfig
 }
 
 func (c CLIConfig) Check() error {
@@ -133,7 +116,7 @@ func (c CLIConfig) Check() error {
 	if err := c.PprofConfig.Check(); err != nil {
 		return err
 	}
-	if err := c.SignerConfig.Check(); err != nil {
+	if err := c.TxMgrConfig.Check(); err != nil {
 		return err
 	}
 	return nil
@@ -143,29 +126,24 @@ func (c CLIConfig) Check() error {
 func NewConfig(ctx *cli.Context) CLIConfig {
 	return CLIConfig{
 		/* Required Flags */
-		L1EthRpc:                  ctx.GlobalString(flags.L1EthRpcFlag.Name),
-		L2EthRpc:                  ctx.GlobalString(flags.L2EthRpcFlag.Name),
-		RollupRpc:                 ctx.GlobalString(flags.RollupRpcFlag.Name),
-		SubSafetyMargin:           ctx.GlobalUint64(flags.SubSafetyMarginFlag.Name),
-		PollInterval:              ctx.GlobalDuration(flags.PollIntervalFlag.Name),
-		NumConfirmations:          ctx.GlobalUint64(flags.NumConfirmationsFlag.Name),
-		SafeAbortNonceTooLowCount: ctx.GlobalUint64(flags.SafeAbortNonceTooLowCountFlag.Name),
-		ResubmissionTimeout:       ctx.GlobalDuration(flags.ResubmissionTimeoutFlag.Name),
+		L1EthRpc:        ctx.GlobalString(flags.L1EthRpcFlag.Name),
+		L2EthRpc:        ctx.GlobalString(flags.L2EthRpcFlag.Name),
+		RollupRpc:       ctx.GlobalString(flags.RollupRpcFlag.Name),
+		SubSafetyMargin: ctx.GlobalUint64(flags.SubSafetyMarginFlag.Name),
+		PollInterval:    ctx.GlobalDuration(flags.PollIntervalFlag.Name),
 
 		/* Optional Flags */
-		MaxChannelDuration: ctx.GlobalUint64(flags.MaxChannelDurationFlag.Name),
-		MaxL1TxSize:        ctx.GlobalUint64(flags.MaxL1TxSizeBytesFlag.Name),
-		TargetL1TxSize:     ctx.GlobalUint64(flags.TargetL1TxSizeBytesFlag.Name),
-		TargetNumFrames:    ctx.GlobalInt(flags.TargetNumFramesFlag.Name),
-		ApproxComprRatio:   ctx.GlobalFloat64(flags.ApproxComprRatioFlag.Name),
-		Stopped:            ctx.GlobalBool(flags.StoppedFlag.Name),
-		Mnemonic:           ctx.GlobalString(flags.MnemonicFlag.Name),
-		SequencerHDPath:    ctx.GlobalString(flags.SequencerHDPathFlag.Name),
-		PrivateKey:         ctx.GlobalString(flags.PrivateKeyFlag.Name),
-		RPCConfig:          rpc.ReadCLIConfig(ctx),
-		LogConfig:          oplog.ReadCLIConfig(ctx),
-		MetricsConfig:      mtmetrics.ReadCLIConfig(ctx),
-		PprofConfig:        mtpprof.ReadCLIConfig(ctx),
-		SignerConfig:       opsigner.ReadCLIConfig(ctx),
+		MaxPendingTransactions: ctx.GlobalUint64(flags.MaxPendingTransactionsFlag.Name),
+		MaxChannelDuration:     ctx.GlobalUint64(flags.MaxChannelDurationFlag.Name),
+		MaxL1TxSize:            ctx.GlobalUint64(flags.MaxL1TxSizeBytesFlag.Name),
+		TargetL1TxSize:         ctx.GlobalUint64(flags.TargetL1TxSizeBytesFlag.Name),
+		TargetNumFrames:        ctx.GlobalInt(flags.TargetNumFramesFlag.Name),
+		ApproxComprRatio:       ctx.GlobalFloat64(flags.ApproxComprRatioFlag.Name),
+		Stopped:                ctx.GlobalBool(flags.StoppedFlag.Name),
+		TxMgrConfig:            txmgr.ReadCLIConfig(ctx),
+		RPCConfig:              rpc.ReadCLIConfig(ctx),
+		LogConfig:              oplog.ReadCLIConfig(ctx),
+		MetricsConfig:          opmetrics.ReadCLIConfig(ctx),
+		PprofConfig:            oppprof.ReadCLIConfig(ctx),
 	}
 }

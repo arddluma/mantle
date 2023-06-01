@@ -11,25 +11,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-isatty"
-	"github.com/urfave/cli/v2"
-
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/mantlenetworkio/mantle/mt-bindings/bindings"
 	"github.com/mantlenetworkio/mantle/mt-bindings/predeploys"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/crossdomain"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis"
-	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis/migration"
-
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/eth/tracers"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/ethclient/gethclient"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/mantlenetworkio/mantle/mt-chain-ops/util"
+	"github.com/mantlenetworkio/mantle/mt-node/rollup"
 )
 
 // abiTrue represents the storage representation of the boolean
@@ -87,8 +85,8 @@ func main() {
 				Usage: "RPC URL for an L2 Node",
 			},
 			&cli.StringFlag{
-				Name:  "mantle-portal-address",
-				Usage: "Address of the MantlePortal on L1",
+				Name:  "optimism-portal-address",
+				Usage: "Address of the OptimismPortal on L1",
 			},
 			&cli.StringFlag{
 				Name:  "l1-crossdomain-messenger-address",
@@ -99,12 +97,16 @@ func main() {
 				Usage: "Address of the L1StandardBridge",
 			},
 			&cli.StringFlag{
-				Name:  "bvm-messages",
-				Usage: "Path to bvm-messages.json",
+				Name:  "ovm-messages",
+				Usage: "Path to ovm-messages.json",
 			},
 			&cli.StringFlag{
 				Name:  "evm-messages",
 				Usage: "Path to evm-messages.json",
+			},
+			&cli.StringFlag{
+				Name:  "witness-file",
+				Usage: "Path to l2geth witness file",
 			},
 			&cli.StringFlag{
 				Name:  "private-key",
@@ -115,9 +117,13 @@ func main() {
 				Value: "bad-withdrawals.json",
 				Usage: "Path to write JSON file of bad withdrawals to manually inspect",
 			},
+			&cli.StringFlag{
+				Name:  "storage-out",
+				Usage: "Path to write text file of L2ToL1MessagePasser storage",
+			},
 		},
 		Action: func(ctx *cli.Context) error {
-			clients, err := newClients(ctx)
+			clients, err := util.NewClients(ctx)
 			if err != nil {
 				return err
 			}
@@ -130,6 +136,10 @@ func main() {
 			l1xdmAddr := common.HexToAddress(ctx.String("l1-crossdomain-messenger-address"))
 
 			l1ChainID, err := clients.L1Client.ChainID(context.Background())
+			if err != nil {
+				return err
+			}
+			l2ChainID, err := clients.L2Client.ChainID(context.Background())
 			if err != nil {
 				return err
 			}
@@ -162,10 +172,11 @@ func main() {
 			}
 
 			outfile := ctx.String("bad-withdrawals-out")
-			f, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o755)
+			f, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 			if err != nil {
 				return err
 			}
+			defer f.Close()
 
 			// create a transactor
 			opts, err := newTransactor(ctx)
@@ -176,12 +187,34 @@ func main() {
 			// Need this to compare in event parsing
 			l1StandardBridgeAddress := common.HexToAddress(ctx.String("l1-standard-bridge-address"))
 
+			if storageOutfile := ctx.String("storage-out"); storageOutfile != "" {
+				ff, err := os.OpenFile(storageOutfile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+				if err != nil {
+					return err
+				}
+				defer ff.Close()
+
+				log.Info("Fetching storage for L2ToL1MessagePasser")
+				if storageRange, err := callStorageRange(clients, predeploys.L2ToL1MessagePasserAddr); err != nil {
+					log.Info("error getting storage range", "err", err)
+				} else {
+					str := ""
+					for key, value := range storageRange {
+						str += fmt.Sprintf("%s: %s\n", key.Hex(), value.Hex())
+					}
+					_, err = ff.WriteString(str)
+					if err != nil {
+						return err
+					}
+				}
+			}
+
 			// iterate over all of the withdrawals and submit them
 			for i, wd := range wds {
 				log.Info("Processing withdrawal", "index", i)
 
 				// migrate the withdrawal
-				withdrawal, err := crossdomain.MigrateWithdrawal(wd, &l1xdmAddr)
+				withdrawal, err := crossdomain.MigrateWithdrawal(wd, &l1xdmAddr, l2ChainID)
 				if err != nil {
 					return err
 				}
@@ -233,7 +266,7 @@ func main() {
 				// successful messages can be skipped, received messages failed
 				// their execution and should be replayed
 				if isSuccessNew {
-					log.Info("Message already relayed", "index", i, "hash", hash, "slot", slot)
+					log.Info("Message already relayed", "index", i, "hash", hash.Hex(), "slot", slot.Hex())
 					continue
 				}
 
@@ -247,7 +280,7 @@ func main() {
 
 				// the value should be set to a boolean in storage
 				if !bytes.Equal(storageValue, abiTrue.Bytes()) {
-					return fmt.Errorf("storage slot %x not found in state", slot)
+					return fmt.Errorf("storage slot %x not found in state", slot.Hex())
 				}
 
 				legacySlot, err := wd.StorageSlot()
@@ -261,23 +294,23 @@ func main() {
 				log.Debug("LegacyMessagePasser status", "value", common.Bytes2Hex(legacyStorageValue))
 
 				// check to see if its already been proven
-				proven, err := contracts.MantlePortal.ProvenWithdrawals(&bind.CallOpts{}, hash)
+				proven, err := contracts.OptimismPortal.ProvenWithdrawals(&bind.CallOpts{}, hash)
 				if err != nil {
 					return err
 				}
 
 				// if it has not been proven, then prove it
 				if proven.Timestamp.Cmp(common.Big0) == 0 {
-					log.Info("Proving withdrawal to MantlePortal")
+					log.Info("Proving withdrawal to OptimismPortal")
 					if err := proveWithdrawalTransaction(contracts, clients, opts, withdrawal, bedrockStartingBlockNumber, period); err != nil {
 						return err
 					}
 				} else {
-					log.Info("Withdrawal already proven to MantlePortal")
+					log.Info("Withdrawal already proven to OptimismPortal")
 				}
 
 				// check to see if the withdrawal has been finalized already
-				isFinalized, err := contracts.MantlePortal.FinalizedWithdrawals(&bind.CallOpts{}, hash)
+				isFinalized, err := contracts.OptimismPortal.FinalizedWithdrawals(&bind.CallOpts{}, hash)
 				if err != nil {
 					return err
 				}
@@ -435,17 +468,55 @@ func main() {
 }
 
 // callTrace will call `debug_traceTransaction` on a remote node
-func callTrace(c *clients, receipt *types.Receipt) (callFrame, error) {
+func callTrace(c *util.Clients, receipt *types.Receipt) (callFrame, error) {
 	var finalizationTrace callFrame
 	tracer := "callTracer"
 	traceConfig := tracers.TraceConfig{
 		Tracer: &tracer,
 	}
 	err := c.L1RpcClient.Call(&finalizationTrace, "debug_traceTransaction", receipt.TxHash, traceConfig)
-	if err != nil {
-		return finalizationTrace, err
-	}
 	return finalizationTrace, err
+}
+
+func callStorageRangeAt(
+	client *rpc.Client,
+	blockHash common.Hash,
+	txIndex int,
+	addr common.Address,
+	keyStart hexutil.Bytes,
+	maxResult int,
+) (*eth.StorageRangeResult, error) {
+	var storageRange *eth.StorageRangeResult
+	err := client.Call(&storageRange, "debug_storageRangeAt", blockHash, txIndex, addr, keyStart, maxResult)
+	return storageRange, err
+}
+
+func callStorageRange(c *util.Clients, addr common.Address) (state.Storage, error) {
+	header, err := c.L2Client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return nil, err
+	}
+	hash := header.Hash()
+	keyStart := hexutil.Bytes(common.Hash{}.Bytes())
+	maxResult := 1000
+
+	ret := make(state.Storage)
+
+	for {
+		result, err := callStorageRangeAt(c.L2RpcClient, hash, 0, addr, keyStart, maxResult)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range result.Storage {
+			ret[key] = value.Value
+		}
+		if result.NextKey == nil {
+			break
+		} else {
+			keyStart = hexutil.Bytes(result.NextKey.Bytes())
+		}
+	}
+	return ret, nil
 }
 
 // handleFinalizeETHWithdrawal will ensure that the calldata is correct
@@ -560,7 +631,7 @@ func handleFinalizeERC20Withdrawal(args []any, receipt *types.Receipt, l1Standar
 // proveWithdrawalTransaction will build the data required for proving a
 // withdrawal and then send the transaction and make sure that it is included
 // and successful and then wait for the finalization period to elapse.
-func proveWithdrawalTransaction(c *contracts, cl *clients, opts *bind.TransactOpts, withdrawal *crossdomain.Withdrawal, bn, finalizationPeriod *big.Int) error {
+func proveWithdrawalTransaction(c *contracts, cl *util.Clients, opts *bind.TransactOpts, withdrawal *crossdomain.Withdrawal, bn, finalizationPeriod *big.Int) error {
 	l2OutputIndex, outputRootProof, trieNodes, err := createOutput(withdrawal, c.L2OutputOracle, bn, cl)
 	if err != nil {
 		return err
@@ -572,7 +643,7 @@ func proveWithdrawalTransaction(c *contracts, cl *clients, opts *bind.TransactOp
 	}
 	wdTx := withdrawal.WithdrawalTransaction()
 
-	tx, err := c.MantlePortal.ProveWithdrawalTransaction(
+	tx, err := c.OptimismPortal.ProveWithdrawalTransaction(
 		opts,
 		wdTx,
 		l2OutputIndex,
@@ -616,7 +687,7 @@ func proveWithdrawalTransaction(c *contracts, cl *clients, opts *bind.TransactOp
 
 func finalizeWithdrawalTransaction(
 	c *contracts,
-	cl *clients,
+	cl *util.Clients,
 	opts *bind.TransactOpts,
 	wd *crossdomain.LegacyWithdrawal,
 	withdrawal *crossdomain.Withdrawal,
@@ -628,7 +699,7 @@ func finalizeWithdrawalTransaction(
 	wdTx := withdrawal.WithdrawalTransaction()
 
 	// Finalize withdrawal
-	tx, err := c.MantlePortal.FinalizeWithdrawalTransaction(
+	tx, err := c.OptimismPortal.FinalizeWithdrawalTransaction(
 		opts,
 		wdTx,
 	)
@@ -648,7 +719,7 @@ func finalizeWithdrawalTransaction(
 
 // contracts represents a set of bound contracts
 type contracts struct {
-	MantlePortal           *bindings.MantlePortal
+	OptimismPortal         *bindings.OptimismPortal
 	L1CrossDomainMessenger *bindings.L1CrossDomainMessenger
 	L2OutputOracle         *bindings.L2OutputOracle
 }
@@ -656,13 +727,13 @@ type contracts struct {
 // newContracts will create a contracts struct with the contract bindings
 // preconfigured
 func newContracts(ctx *cli.Context, l1Backend, l2Backend bind.ContractBackend) (*contracts, error) {
-	MantlePortalAddress := ctx.String("mantle-portal-address")
-	if len(MantlePortalAddress) == 0 {
-		return nil, errors.New("MantlePortal address not configured")
+	optimismPortalAddress := ctx.String("optimism-portal-address")
+	if len(optimismPortalAddress) == 0 {
+		return nil, errors.New("OptimismPortal address not configured")
 	}
-	MantlePortalAddr := common.HexToAddress(MantlePortalAddress)
+	optimismPortalAddr := common.HexToAddress(optimismPortalAddress)
 
-	portal, err := bindings.NewMantlePortal(MantlePortalAddr, l1Backend)
+	portal, err := bindings.NewOptimismPortal(optimismPortalAddr, l1Backend)
 	if err != nil {
 		return nil, err
 	}
@@ -690,107 +761,61 @@ func newContracts(ctx *cli.Context, l1Backend, l2Backend bind.ContractBackend) (
 	log.Info(
 		"Addresses",
 		"l1-crossdomain-messenger", l1xdmAddr,
-		"mantle-portal", MantlePortalAddr,
+		"optimism-portal", optimismPortalAddr,
 		"l2-output-oracle", l2OracleAddr,
 	)
 
 	return &contracts{
-		MantlePortal:           portal,
+		OptimismPortal:         portal,
 		L1CrossDomainMessenger: l1CrossDomainMessenger,
 		L2OutputOracle:         oracle,
 	}, nil
 }
 
-// clients represents a set of initialized RPC clients
-type clients struct {
-	L1Client     *ethclient.Client
-	L2Client     *ethclient.Client
-	L1RpcClient  *rpc.Client
-	L2RpcClient  *rpc.Client
-	L1GethClient *gethclient.Client
-	L2GethClient *gethclient.Client
-}
-
-// newClients will create new RPC clients
-func newClients(ctx *cli.Context) (*clients, error) {
-	l1RpcURL := ctx.String("l1-rpc-url")
-	l1Client, err := ethclient.Dial(l1RpcURL)
-	if err != nil {
-		return nil, err
-	}
-	l1ChainID, err := l1Client.ChainID(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	l2RpcURL := ctx.String("l2-rpc-url")
-	l2Client, err := ethclient.Dial(l2RpcURL)
-	if err != nil {
-		return nil, err
-	}
-	l2ChainID, err := l2Client.ChainID(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	l1RpcClient, err := rpc.DialContext(context.Background(), l1RpcURL)
-	if err != nil {
-		return nil, err
-	}
-
-	l2RpcClient, err := rpc.DialContext(context.Background(), l2RpcURL)
-	if err != nil {
-		return nil, err
-	}
-
-	l1GethClient := gethclient.New(l1RpcClient)
-	l2GethClient := gethclient.New(l2RpcClient)
-
-	log.Info(
-		"Set up RPC clients",
-		"l1-chain-id", l1ChainID,
-		"l2-chain-id", l2ChainID,
-	)
-
-	return &clients{
-		L1Client:     l1Client,
-		L2Client:     l2Client,
-		L1RpcClient:  l1RpcClient,
-		L2RpcClient:  l2RpcClient,
-		L1GethClient: l1GethClient,
-		L2GethClient: l2GethClient,
-	}, nil
-}
-
 // newWithdrawals will create a set of legacy withdrawals
 func newWithdrawals(ctx *cli.Context, l1ChainID *big.Int) ([]*crossdomain.LegacyWithdrawal, error) {
-	bvmMsgs := ctx.String("bvm-messages")
+	ovmMsgs := ctx.String("ovm-messages")
 	evmMsgs := ctx.String("evm-messages")
+	witnessFile := ctx.String("witness-file")
 
-	log.Debug("Migration data", "bvm-path", bvmMsgs, "evm-messages", evmMsgs)
-	bvmMessages, err := migration.NewSentMessage(bvmMsgs)
-	if err != nil {
-		return nil, err
+	log.Debug("Migration data", "ovm-path", ovmMsgs, "evm-messages", evmMsgs, "witness-file", witnessFile)
+	var ovmMessages []*crossdomain.SentMessage
+	var err error
+	if ovmMsgs != "" {
+		ovmMessages, err = crossdomain.NewSentMessageFromJSON(ovmMsgs)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// use empty bvmMessages if its not mainnet. The mainnet messages are
+	// use empty ovmMessages if its not mainnet. The mainnet messages are
 	// committed to in git.
 	if l1ChainID.Cmp(common.Big1) != 0 {
-		log.Info("not using bvm messages because its not mainnet")
-		bvmMessages = []*migration.SentMessage{}
+		log.Info("not using ovm messages because its not mainnet")
+		ovmMessages = []*crossdomain.SentMessage{}
 	}
 
-	evmMessages, err := migration.NewSentMessage(evmMsgs)
-	if err != nil {
-		return nil, err
+	var evmMessages []*crossdomain.SentMessage
+	if witnessFile != "" {
+		evmMessages, _, err = crossdomain.ReadWitnessData(witnessFile)
+		if err != nil {
+			return nil, err
+		}
+	} else if evmMsgs != "" {
+		evmMessages, err = crossdomain.NewSentMessageFromJSON(evmMsgs)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, errors.New("must provide either witness file or evm messages")
 	}
 
-	migrationData := migration.MigrationData{
-		BvmMessages: bvmMessages,
+	migrationData := crossdomain.MigrationData{
+		BvmMessages: ovmMessages,
 		EvmMessages: evmMessages,
 	}
 
-	wds, err := migrationData.ToWithdrawals()
+	wds, _, err := migrationData.ToWithdrawals()
 	if err != nil {
 		return nil, err
 	}
@@ -851,7 +876,7 @@ func createOutput(
 	withdrawal *crossdomain.Withdrawal,
 	oracle *bindings.L2OutputOracle,
 	blockNumber *big.Int,
-	clients *clients,
+	clients *util.Clients,
 ) (*big.Int, bindings.TypesOutputRootProof, [][]byte, error) {
 	// compute the storage slot that the withdrawal is stored in
 	slot, err := withdrawal.StorageSlot()
@@ -906,14 +931,12 @@ func createOutput(
 		LatestBlockhash:          header.Hash(),
 	}
 
-	// TODO(mark): import the function from `mt-node` to compute the hash
-	// instead of doing this. Will update when testing against mainnet.
-	localOutputRootHash := crypto.Keccak256Hash(
-		outputRootProof.Version[:],
-		outputRootProof.StateRoot[:],
-		outputRootProof.MessagePasserStorageRoot[:],
-		outputRootProof.LatestBlockhash[:],
-	)
+	// Compute the output root locally
+	l2OutputRoot, err := rollup.ComputeL2OutputRoot(&outputRootProof)
+	localOutputRootHash := common.Hash(l2OutputRoot)
+	if err != nil {
+		return nil, bindings.TypesOutputRootProof{}, nil, err
+	}
 
 	// ensure that the locally computed hash matches
 	if l2Output.OutputRoot != localOutputRootHash {

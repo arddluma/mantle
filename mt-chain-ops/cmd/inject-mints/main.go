@@ -4,14 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mattn/go-isatty"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/db"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/ether"
-	"github.com/schollz/progressbar/v3"
 	"github.com/urfave/cli"
 )
 

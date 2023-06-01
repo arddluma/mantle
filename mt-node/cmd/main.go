@@ -8,13 +8,14 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/mantlenetworkio/mantle/mt-node/chaincfg"
 	"github.com/mantlenetworkio/mantle/mt-node/cmd/doc"
 
 	"github.com/urfave/cli"
 
 	"github.com/ethereum/go-ethereum/log"
 
-	mtnode "github.com/mantlenetworkio/mantle/mt-node"
+	opnode "github.com/mantlenetworkio/mantle/mt-node"
 	"github.com/mantlenetworkio/mantle/mt-node/cmd/genesis"
 	"github.com/mantlenetworkio/mantle/mt-node/cmd/p2p"
 	"github.com/mantlenetworkio/mantle/mt-node/flags"
@@ -22,7 +23,8 @@ import (
 	"github.com/mantlenetworkio/mantle/mt-node/metrics"
 	"github.com/mantlenetworkio/mantle/mt-node/node"
 	"github.com/mantlenetworkio/mantle/mt-node/version"
-	mtpprof "github.com/mantlenetworkio/mantle/mt-service/pprof"
+	oplog "github.com/mantlenetworkio/mantle/mt-service/log"
+	oppprof "github.com/mantlenetworkio/mantle/mt-service/pprof"
 )
 
 var (
@@ -48,19 +50,14 @@ var VersionWithMeta = func() string {
 func main() {
 	// Set up logger with a default INFO level in case we fail to parse flags,
 	// otherwise the final critical log won't show what the parsing error was.
-	log.Root().SetHandler(
-		log.LvlFilterHandler(
-			log.LvlInfo,
-			log.StreamHandler(os.Stdout, log.TerminalFormat(true)),
-		),
-	)
+	oplog.SetupDefaults()
 
 	app := cli.NewApp()
 	app.Version = VersionWithMeta
 	app.Flags = flags.Flags
-	app.Name = "mt-node"
-	app.Usage = "Mantle Rollup Node"
-	app.Description = "The Mantle Rollup Node derives L2 block inputs from L1 data and drives an external L2 Execution Engine to build a L2 chain."
+	app.Name = "op-node"
+	app.Usage = "Optimism Rollup Node"
+	app.Description = "The Optimism Rollup Node derives L2 block inputs from L1 data and drives an external L2 Execution Engine to build a L2 chain."
 	app.Action = RollupNodeMain
 	app.Commands = []cli.Command{
 		{
@@ -85,23 +82,30 @@ func main() {
 
 func RollupNodeMain(ctx *cli.Context) error {
 	log.Info("Initializing Rollup Node")
-	logCfg, err := mtnode.NewLogConfig(ctx)
-	if err != nil {
+	logCfg := oplog.ReadCLIConfig(ctx)
+	if err := logCfg.Check(); err != nil {
 		log.Error("Unable to create the log config", "error", err)
 		return err
 	}
-	log := logCfg.NewLogger()
+	log := oplog.NewLogger(logCfg)
 	m := metrics.NewMetrics("default")
 
-	cfg, err := mtnode.NewConfig(ctx, log)
+	cfg, err := opnode.NewConfig(ctx, log)
 	if err != nil {
 		log.Error("Unable to create the rollup node config", "error", err)
 		return err
 	}
-	snapshotLog, err := mtnode.NewSnapshotLogger(ctx)
+	snapshotLog, err := opnode.NewSnapshotLogger(ctx)
 	if err != nil {
 		log.Error("Unable to create snapshot root logger", "error", err)
 		return err
+	}
+
+	// Only pretty-print the banner if it is a terminal log. Other log it as key-value pairs.
+	if logCfg.Format == "terminal" {
+		log.Info("rollup config:\n" + cfg.Rollup.Description(chaincfg.L2ChainIDToNetworkName))
+	} else {
+		cfg.Rollup.LogDescription(log, chaincfg.L2ChainIDToNetworkName)
 	}
 
 	n, err := node.New(context.Background(), cfg, log, snapshotLog, VersionWithMeta, m)
@@ -149,7 +153,7 @@ func RollupNodeMain(ctx *cli.Context) error {
 		pprofCtx, pprofCancel := context.WithCancel(context.Background())
 		go func() {
 			log.Info("pprof server started", "addr", net.JoinHostPort(cfg.Pprof.ListenAddr, strconv.Itoa(cfg.Pprof.ListenPort)))
-			if err := mtpprof.ListenAndServe(pprofCtx, cfg.Pprof.ListenAddr, cfg.Pprof.ListenPort); err != nil {
+			if err := oppprof.ListenAndServe(pprofCtx, cfg.Pprof.ListenAddr, cfg.Pprof.ListenPort); err != nil {
 				log.Error("error starting pprof", "err", err)
 			}
 		}()

@@ -1,80 +1,60 @@
 package flags
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/urfave/cli"
 
 	"github.com/mantlenetworkio/mantle/mt-l1batcher/rpc"
 	opservice "github.com/mantlenetworkio/mantle/mt-service"
 	oplog "github.com/mantlenetworkio/mantle/mt-service/log"
-	mtmetrics "github.com/mantlenetworkio/mantle/mt-service/metrics"
-	mtpprof "github.com/mantlenetworkio/mantle/mt-service/pprof"
+	opmetrics "github.com/mantlenetworkio/mantle/mt-service/metrics"
+	oppprof "github.com/mantlenetworkio/mantle/mt-service/pprof"
 	oprpc "github.com/mantlenetworkio/mantle/mt-service/rpc"
-	opsigner "github.com/mantlenetworkio/mantle/mt-signer/client"
+	"github.com/mantlenetworkio/mantle/mt-service/txmgr"
 )
 
 const envVarPrefix = "OP_BATCHER"
 
 var (
-	/* Required flags */
-
+	// Required flags
 	L1EthRpcFlag = cli.StringFlag{
-		Name:     "l1-eth-rpc",
-		Usage:    "HTTP provider URL for L1",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "L1_ETH_RPC"),
+		Name:   "l1-eth-rpc",
+		Usage:  "HTTP provider URL for L1",
+		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "L1_ETH_RPC"),
 	}
 	L2EthRpcFlag = cli.StringFlag{
-		Name:     "l2-eth-rpc",
-		Usage:    "HTTP provider URL for L2 execution engine",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "L2_ETH_RPC"),
+		Name:   "l2-eth-rpc",
+		Usage:  "HTTP provider URL for L2 execution engine",
+		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "L2_ETH_RPC"),
 	}
 	RollupRpcFlag = cli.StringFlag{
-		Name:     "rollup-rpc",
-		Usage:    "HTTP provider URL for Rollup node",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "ROLLUP_RPC"),
+		Name:   "rollup-rpc",
+		Usage:  "HTTP provider URL for Rollup node",
+		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "ROLLUP_RPC"),
 	}
+	// Optional flags
 	SubSafetyMarginFlag = cli.Uint64Flag{
 		Name: "sub-safety-margin",
 		Usage: "The batcher tx submission safety margin (in #L1-blocks) to subtract " +
 			"from a channel's timeout and sequencing window, to guarantee safe inclusion " +
 			"of a channel on L1.",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "SUB_SAFETY_MARGIN"),
+		Value:  10,
+		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "SUB_SAFETY_MARGIN"),
 	}
 	PollIntervalFlag = cli.DurationFlag{
-		Name: "poll-interval",
-		Usage: "Delay between querying L2 for more transactions and " +
-			"creating a new batch",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "POLL_INTERVAL"),
+		Name:   "poll-interval",
+		Usage:  "How frequently to poll L2 for new blocks",
+		Value:  6 * time.Second,
+		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "POLL_INTERVAL"),
 	}
-	NumConfirmationsFlag = cli.Uint64Flag{
-		Name: "num-confirmations",
-		Usage: "Number of confirmations which we will wait after " +
-			"appending a new batch",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "NUM_CONFIRMATIONS"),
+	MaxPendingTransactionsFlag = cli.Uint64Flag{
+		Name:   "max-pending-tx",
+		Usage:  "The maximum number of pending transactions. 0 for no limit.",
+		Value:  1,
+		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "MAX_PENDING_TX"),
 	}
-	SafeAbortNonceTooLowCountFlag = cli.Uint64Flag{
-		Name: "safe-abort-nonce-too-low-count",
-		Usage: "Number of ErrNonceTooLow observations required to " +
-			"give up on a tx at a particular nonce without receiving " +
-			"confirmation",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "SAFE_ABORT_NONCE_TOO_LOW_COUNT"),
-	}
-	ResubmissionTimeoutFlag = cli.DurationFlag{
-		Name: "resubmission-timeout",
-		Usage: "Duration we will wait before resubmitting a " +
-			"transaction to L1",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "RESUBMISSION_TIMEOUT"),
-	}
-
-	/* Optional flags */
-
 	MaxChannelDurationFlag = cli.Uint64Flag{
 		Name:   "max-channel-duration",
 		Usage:  "The maximum duration of L1-blocks to keep a channel open. 0 to disable.",
@@ -110,59 +90,48 @@ var (
 		Usage:  "Initialize the batcher in a stopped state. The batcher can be started using the admin_startBatcher RPC",
 		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "STOPPED"),
 	}
-	MnemonicFlag = cli.StringFlag{
-		Name: "mnemonic",
-		Usage: "The mnemonic used to derive the wallets for either the " +
-			"sequencer or the l2output",
-		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "MNEMONIC"),
-	}
-	SequencerHDPathFlag = cli.StringFlag{
-		Name: "sequencer-hd-path",
-		Usage: "The HD path used to derive the sequencer wallet from the " +
-			"mnemonic. The mnemonic flag must also be set.",
-		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "SEQUENCER_HD_PATH"),
-	}
-	PrivateKeyFlag = cli.StringFlag{
-		Name:   "private-key",
-		Usage:  "The private key to use with the l2output wallet. Must not be used with mnemonic.",
-		EnvVar: opservice.PrefixEnvVar(envVarPrefix, "PRIVATE_KEY"),
-	}
+	// Legacy Flags
+	SequencerHDPathFlag = txmgr.SequencerHDPathFlag
 )
 
 var requiredFlags = []cli.Flag{
 	L1EthRpcFlag,
 	L2EthRpcFlag,
 	RollupRpcFlag,
-	SubSafetyMarginFlag,
-	PollIntervalFlag,
-	NumConfirmationsFlag,
-	SafeAbortNonceTooLowCountFlag,
-	ResubmissionTimeoutFlag,
 }
 
 var optionalFlags = []cli.Flag{
+	SubSafetyMarginFlag,
+	PollIntervalFlag,
+	MaxPendingTransactionsFlag,
 	MaxChannelDurationFlag,
 	MaxL1TxSizeBytesFlag,
 	TargetL1TxSizeBytesFlag,
 	TargetNumFramesFlag,
 	ApproxComprRatioFlag,
 	StoppedFlag,
-	MnemonicFlag,
 	SequencerHDPathFlag,
-	PrivateKeyFlag,
 }
 
 func init() {
-	requiredFlags = append(requiredFlags, oprpc.CLIFlags(envVarPrefix)...)
-
+	optionalFlags = append(optionalFlags, oprpc.CLIFlags(envVarPrefix)...)
 	optionalFlags = append(optionalFlags, oplog.CLIFlags(envVarPrefix)...)
-	optionalFlags = append(optionalFlags, mtmetrics.CLIFlags(envVarPrefix)...)
-	optionalFlags = append(optionalFlags, mtpprof.CLIFlags(envVarPrefix)...)
-	optionalFlags = append(optionalFlags, opsigner.CLIFlags(envVarPrefix)...)
+	optionalFlags = append(optionalFlags, opmetrics.CLIFlags(envVarPrefix)...)
+	optionalFlags = append(optionalFlags, oppprof.CLIFlags(envVarPrefix)...)
 	optionalFlags = append(optionalFlags, rpc.CLIFlags(envVarPrefix)...)
+	optionalFlags = append(optionalFlags, txmgr.CLIFlags(envVarPrefix)...)
 
 	Flags = append(requiredFlags, optionalFlags...)
 }
 
 // Flags contains the list of configuration options available to the binary.
 var Flags []cli.Flag
+
+func CheckRequired(ctx *cli.Context) error {
+	for _, f := range requiredFlags {
+		if !ctx.GlobalIsSet(f.GetName()) {
+			return fmt.Errorf("flag %s is required", f.GetName())
+		}
+	}
+	return nil
+}

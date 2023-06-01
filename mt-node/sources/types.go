@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -33,66 +34,57 @@ type CallContextFn func(ctx context.Context, result any, method string, args ...
 //
 // This way we minimize RPC calls, enable batching, and can choose to verify what the RPC gives us.
 
-// HeaderInfo contains all the header-info required to implement the eth.BlockInfo interface,
-// used in the rollup state-transition, with pre-computed block hash.
-type HeaderInfo struct {
-	hash        common.Hash
-	parentHash  common.Hash
-	coinbase    common.Address
-	root        common.Hash
-	number      uint64
-	time        uint64
-	mixDigest   common.Hash // a.k.a. the randomness field post-merge.
-	baseFee     *big.Int
-	txHash      common.Hash
-	receiptHash common.Hash
-	gasUsed     uint64
+// headerInfo is a conversion type of types.Header turning it into a
+// BlockInfo, but using a cached hash value.
+type headerInfo struct {
+	hash common.Hash
+	*types.Header
 }
 
-var _ eth.BlockInfo = (*HeaderInfo)(nil)
+var _ eth.BlockInfo = (*headerInfo)(nil)
 
-func (info *HeaderInfo) Hash() common.Hash {
-	return info.hash
+func (h headerInfo) Hash() common.Hash {
+	return h.hash
 }
 
-func (info *HeaderInfo) ParentHash() common.Hash {
-	return info.parentHash
+func (h headerInfo) ParentHash() common.Hash {
+	return h.Header.ParentHash
 }
 
-func (info *HeaderInfo) Coinbase() common.Address {
-	return info.coinbase
+func (h headerInfo) Coinbase() common.Address {
+	return h.Header.Coinbase
 }
 
-func (info *HeaderInfo) Root() common.Hash {
-	return info.root
+func (h headerInfo) Root() common.Hash {
+	return h.Header.Root
 }
 
-func (info *HeaderInfo) NumberU64() uint64 {
-	return info.number
+func (h headerInfo) NumberU64() uint64 {
+	return h.Header.Number.Uint64()
 }
 
-func (info *HeaderInfo) Time() uint64 {
-	return info.time
+func (h headerInfo) Time() uint64 {
+	return h.Header.Time
 }
 
-func (info *HeaderInfo) MixDigest() common.Hash {
-	return info.mixDigest
+func (h headerInfo) MixDigest() common.Hash {
+	return h.Header.MixDigest
 }
 
-func (info *HeaderInfo) BaseFee() *big.Int {
-	return info.baseFee
+func (h headerInfo) BaseFee() *big.Int {
+	return h.Header.BaseFee
 }
 
-func (info *HeaderInfo) ID() eth.BlockID {
-	return eth.BlockID{Hash: info.hash, Number: info.number}
+func (h headerInfo) ReceiptHash() common.Hash {
+	return h.Header.ReceiptHash
 }
 
-func (info *HeaderInfo) ReceiptHash() common.Hash {
-	return info.receiptHash
+func (h headerInfo) GasUsed() uint64 {
+	return h.Header.GasUsed
 }
 
-func (info *HeaderInfo) GasUsed() uint64 {
-	return info.gasUsed
+func (h headerInfo) HeaderRLP() ([]byte, error) {
+	return rlp.EncodeToBytes(h.Header)
 }
 
 type rpcHeader struct {
@@ -113,7 +105,10 @@ type rpcHeader struct {
 	Nonce       types.BlockNonce `json:"nonce"`
 
 	// BaseFee was added by EIP-1559 and is ignored in legacy headers.
-	BaseFee *hexutil.Big `json:"baseFeePerGas" rlp:"optional"`
+	BaseFee *hexutil.Big `json:"baseFeePerGas"`
+
+	// WithdrawalsRoot was added by EIP-4895 and is ignored in legacy headers.
+	WithdrawalsRoot *common.Hash `json:"withdrawalsRoot"`
 
 	// untrusted info included by RPC, may have to be checked
 	Hash common.Hash `json:"hash"`
@@ -143,28 +138,33 @@ func (hdr *rpcHeader) checkPostMerge() error {
 }
 
 func (hdr *rpcHeader) computeBlockHash() common.Hash {
-	gethHeader := types.Header{
-		ParentHash:  hdr.ParentHash,
-		UncleHash:   hdr.UncleHash,
-		Coinbase:    hdr.Coinbase,
-		Root:        hdr.Root,
-		TxHash:      hdr.TxHash,
-		ReceiptHash: hdr.ReceiptHash,
-		Bloom:       types.Bloom(hdr.Bloom),
-		Difficulty:  (*big.Int)(&hdr.Difficulty),
-		Number:      new(big.Int).SetUint64(uint64(hdr.Number)),
-		GasLimit:    uint64(hdr.GasLimit),
-		GasUsed:     uint64(hdr.GasUsed),
-		Time:        uint64(hdr.Time),
-		Extra:       hdr.Extra,
-		MixDigest:   hdr.MixDigest,
-		Nonce:       hdr.Nonce,
-		BaseFee:     (*big.Int)(hdr.BaseFee),
-	}
+	gethHeader := hdr.createGethHeader()
 	return gethHeader.Hash()
 }
 
-func (hdr *rpcHeader) Info(trustCache bool, mustBePostMerge bool) (*HeaderInfo, error) {
+func (hdr *rpcHeader) createGethHeader() *types.Header {
+	return &types.Header{
+		ParentHash:      hdr.ParentHash,
+		UncleHash:       hdr.UncleHash,
+		Coinbase:        hdr.Coinbase,
+		Root:            hdr.Root,
+		TxHash:          hdr.TxHash,
+		ReceiptHash:     hdr.ReceiptHash,
+		Bloom:           types.Bloom(hdr.Bloom),
+		Difficulty:      (*big.Int)(&hdr.Difficulty),
+		Number:          new(big.Int).SetUint64(uint64(hdr.Number)),
+		GasLimit:        uint64(hdr.GasLimit),
+		GasUsed:         uint64(hdr.GasUsed),
+		Time:            uint64(hdr.Time),
+		Extra:           hdr.Extra,
+		MixDigest:       hdr.MixDigest,
+		Nonce:           hdr.Nonce,
+		BaseFee:         (*big.Int)(hdr.BaseFee),
+		WithdrawalsHash: hdr.WithdrawalsRoot,
+	}
+}
+
+func (hdr *rpcHeader) Info(trustCache bool, mustBePostMerge bool) (eth.BlockInfo, error) {
 	if mustBePostMerge {
 		if err := hdr.checkPostMerge(); err != nil {
 			return nil, err
@@ -175,21 +175,7 @@ func (hdr *rpcHeader) Info(trustCache bool, mustBePostMerge bool) (*HeaderInfo, 
 			return nil, fmt.Errorf("failed to verify block hash: computed %s but RPC said %s", computed, hdr.Hash)
 		}
 	}
-
-	info := HeaderInfo{
-		hash:        hdr.Hash,
-		parentHash:  hdr.ParentHash,
-		coinbase:    hdr.Coinbase,
-		root:        hdr.Root,
-		number:      uint64(hdr.Number),
-		time:        uint64(hdr.Time),
-		mixDigest:   hdr.MixDigest,
-		baseFee:     (*big.Int)(hdr.BaseFee),
-		txHash:      hdr.TxHash,
-		receiptHash: hdr.ReceiptHash,
-		gasUsed:     uint64(hdr.GasUsed),
-	}
-	return &info, nil
+	return &headerInfo{hdr.Hash, hdr.createGethHeader()}, nil
 }
 
 type rpcBlock struct {
@@ -207,7 +193,7 @@ func (block *rpcBlock) verify() error {
 	return nil
 }
 
-func (block *rpcBlock) Info(trustCache bool, mustBePostMerge bool) (*HeaderInfo, types.Transactions, error) {
+func (block *rpcBlock) Info(trustCache bool, mustBePostMerge bool) (eth.BlockInfo, types.Transactions, error) {
 	if mustBePostMerge {
 		if err := block.checkPostMerge(); err != nil {
 			return nil, nil, err

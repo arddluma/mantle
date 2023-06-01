@@ -7,7 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 )
 
-// BuildL2DeveloperGenesis will build the developer Mantle Genesis
+// BuildL2DeveloperGenesis will build the developer Optimism Genesis
 // Block. Suitable for devnets.
 func BuildL2DeveloperGenesis(config *DeployConfig, l1StartBlock *types.Block) (*core.Genesis, error) {
 	genspec, err := NewL2Genesis(config, l1StartBlock)

@@ -16,7 +16,6 @@ import (
 	"github.com/mantlenetworkio/mantle/mt-bindings/predeploys"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/crossdomain"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/ether"
-	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis/migration"
 )
 
 var (
@@ -35,7 +34,7 @@ type MigrationResult struct {
 }
 
 // MigrateDB will migrate an l2geth legacy Mantle database to a Bedrock database.
-func MigrateDB(ldb ethdb.Database, config *DeployConfig, l1Block *types.Block, migrationData *migration.MigrationData, commit, noCheck bool) (*MigrationResult, error) {
+func MigrateDB(ldb ethdb.Database, config *DeployConfig, l1Block *types.Block, migrationData *crossdomain.MigrationData, commit, noCheck bool) (*MigrationResult, error) {
 	// Grab the hash of the tip of the legacy chain.
 	hash := rawdb.ReadHeadHeaderHash(ldb)
 	log.Info("Reading chain tip from database", "hash", hash)
@@ -83,16 +82,25 @@ func MigrateDB(ldb ethdb.Database, config *DeployConfig, l1Block *types.Block, m
 		)
 	}
 
-	// Set up the backing store.
-	underlyingDB := state.NewDatabaseWithConfig(ldb, &trie.Config{
-		Preimages: true,
-		Cache:     1024,
-	})
+	dbFactory := func() (*state.StateDB, error) {
+		// Set up the backing store.
+		underlyingDB := state.NewDatabaseWithConfig(ldb, &trie.Config{
+			Preimages: true,
+			Cache:     1024,
+		})
 
-	// Open up the state database.
-	db, err := state.New(header.Root, underlyingDB, nil)
+		// Open up the state database.
+		db, err := state.New(header.Root, underlyingDB, nil)
+		if err != nil {
+			return nil, fmt.Errorf("cannot open StateDB: %w", err)
+		}
+
+		return db, nil
+	}
+
+	db, err := dbFactory()
 	if err != nil {
-		return nil, fmt.Errorf("cannot open StateDB: %w", err)
+		return nil, fmt.Errorf("cannot create StateDB: %w", err)
 	}
 
 	// Before we do anything else, we need to ensure that all of the input configuration is correct
@@ -114,33 +122,25 @@ func MigrateDB(ldb ethdb.Database, config *DeployConfig, l1Block *types.Block, m
 
 	// Convert all input messages into legacy messages. Note that this list is not yet filtered and
 	// may be missing some messages or have some extra messages.
-	unfilteredWithdrawals, err := migrationData.ToWithdrawals()
+	unfilteredWithdrawals, invalidMessages, err := migrationData.ToWithdrawals()
 	if err != nil {
 		return nil, fmt.Errorf("cannot serialize withdrawals: %w", err)
 	}
+
+	log.Info("Read withdrawals from witness data", "unfiltered", len(unfilteredWithdrawals), "invalid", len(invalidMessages))
 
 	// We now need to check that we have all of the withdrawals that we expect to have. An error
 	// will be thrown if there are any missing messages, and any extra messages will be removed.
 	var filteredWithdrawals crossdomain.SafeFilteredWithdrawals
 	if !noCheck {
 		log.Info("Checking withdrawals...")
-		filteredWithdrawals, err = crossdomain.PreCheckWithdrawals(db, unfilteredWithdrawals)
+		filteredWithdrawals, err = crossdomain.PreCheckWithdrawals(db, unfilteredWithdrawals, invalidMessages)
 		if err != nil {
 			return nil, fmt.Errorf("withdrawals mismatch: %w", err)
 		}
 	} else {
 		log.Info("Skipping checking withdrawals")
 		filteredWithdrawals = crossdomain.SafeFilteredWithdrawals(unfilteredWithdrawals)
-	}
-
-	// We also need to verify that we have all of the storage slots for the LegacyERC20ETH contract
-	// that we expect to have. An error will be thrown if there are any missing storage slots.
-	// Unlike with withdrawals, we do not need to filter out extra addresses because their balances
-	// would necessarily be zero and therefore not affect the migration.
-	log.Info("Checking addresses...", "no-check", noCheck)
-	addrs, err := ether.PreCheckBalances(ldb, db, migrationData.Addresses(), migrationData.BvmAllowances, int(config.L1ChainID), noCheck)
-	if err != nil {
-		return nil, fmt.Errorf("addresses mismatch: %w", err)
 	}
 
 	// At this point we've fully verified the witness data for the migration, so we can begin the
@@ -186,17 +186,19 @@ func MigrateDB(ldb ethdb.Database, config *DeployConfig, l1Block *types.Block, m
 	// the LegacyMessagePasser contract. Here we operate on the list of withdrawals that we
 	// previously filtered and verified.
 	log.Info("Starting to migrate withdrawals", "no-check", noCheck)
-	err = crossdomain.MigrateWithdrawals(filteredWithdrawals, db, &config.L1CrossDomainMessengerProxy, noCheck)
+	l2ChainID := new(big.Int).SetUint64(config.L2ChainID)
+	err = crossdomain.MigrateWithdrawals(filteredWithdrawals, db, &config.L1CrossDomainMessengerProxy, noCheck, l2ChainID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot migrate withdrawals: %w", err)
 	}
 
 	// Finally we migrate the balances held inside the LegacyERC20ETH contract into the state trie.
-	// We also delete the balances from the LegacyERC20ETH contract.
+	// We also delete the balances from the LegacyERC20ETH contract. Unlike the steps above, this step
+	// combines the check and mutation steps into one in order to reduce migration time.
 	log.Info("Starting to migrate ERC20 ETH")
-	err = ether.MigrateLegacyETH(db, addrs, int(config.L1ChainID), noCheck)
+	err = ether.MigrateBalances(db, dbFactory, migrationData.Addresses(), migrationData.BvmAllowances, int(config.L1ChainID), noCheck)
 	if err != nil {
-		return nil, fmt.Errorf("cannot migrate legacy eth: %w", err)
+		return nil, fmt.Errorf("failed to migrate OVM_ETH: %w", err)
 	}
 
 	// We're done messing around with the database, so we can now commit the changes to the DB.

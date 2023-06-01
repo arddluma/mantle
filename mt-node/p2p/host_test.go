@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/mantlenetworkio/mantle/mt-node/eth"
+	"github.com/mantlenetworkio/mantle/mt-node/metrics"
 	"github.com/mantlenetworkio/mantle/mt-node/rollup"
 	"github.com/mantlenetworkio/mantle/mt-node/testlog"
 	"github.com/mantlenetworkio/mantle/mt-node/testutils"
@@ -48,7 +49,7 @@ func TestingConfig(t *testing.T) *Config {
 		PeersHi:             10,
 		PeersGrace:          time.Second * 10,
 		NAT:                 false,
-		UserAgent:           "mantle-testing",
+		UserAgent:           "optimism-testing",
 		TimeoutNegotiation:  time.Second * 2,
 		TimeoutAccept:       time.Second * 2,
 		TimeoutDial:         time.Second * 2,
@@ -107,7 +108,7 @@ func TestP2PFull(t *testing.T) {
 		PeersHi:             10,
 		PeersGrace:          time.Second * 10,
 		NAT:                 false,
-		UserAgent:           "mantle-testing",
+		UserAgent:           "optimism-testing",
 		TimeoutNegotiation:  time.Second * 2,
 		TimeoutAccept:       time.Second * 2,
 		TimeoutDial:         time.Second * 2,
@@ -125,7 +126,7 @@ func TestP2PFull(t *testing.T) {
 	runCfgB := &testutils.MockRuntimeConfig{P2PSeqAddress: common.Address{0x42}}
 
 	logA := testlog.Logger(t, log.LvlError).New("host", "A")
-	nodeA, err := NewNodeP2P(context.Background(), &rollup.Config{}, logA, &confA, &mockGossipIn{}, runCfgA, nil)
+	nodeA, err := NewNodeP2P(context.Background(), &rollup.Config{}, logA, &confA, &mockGossipIn{}, nil, runCfgA, metrics.NoopMetrics)
 	require.NoError(t, err)
 	defer nodeA.Close()
 
@@ -148,7 +149,7 @@ func TestP2PFull(t *testing.T) {
 
 	logB := testlog.Logger(t, log.LvlError).New("host", "B")
 
-	nodeB, err := NewNodeP2P(context.Background(), &rollup.Config{}, logB, &confB, &mockGossipIn{}, runCfgB, nil)
+	nodeB, err := NewNodeP2P(context.Background(), &rollup.Config{}, logB, &confB, &mockGossipIn{}, nil, runCfgB, metrics.NoopMetrics)
 	require.NoError(t, err)
 	defer nodeB.Close()
 	hostB := nodeB.Host()
@@ -168,7 +169,7 @@ func TestP2PFull(t *testing.T) {
 
 	_, err = p2pClientA.DiscoveryTable(ctx)
 	// rpc does not preserve error type
-	require.Equal(t, err.Error(), DisabledDiscovery.Error(), "expecting discv5 to be disabled")
+	require.Equal(t, err.Error(), ErrDisabledDiscovery.Error(), "expecting discv5 to be disabled")
 
 	require.NoError(t, p2pClientA.BlockPeer(ctx, hostB.ID()))
 	blockedPeers, err := p2pClientA.ListBlockedPeers(ctx)
@@ -255,7 +256,7 @@ func TestDiscovery(t *testing.T) {
 		PeersHi:             10,
 		PeersGrace:          time.Second * 10,
 		NAT:                 false,
-		UserAgent:           "mantle-testing",
+		UserAgent:           "optimism-testing",
 		TimeoutNegotiation:  time.Second * 2,
 		TimeoutAccept:       time.Second * 2,
 		TimeoutDial:         time.Second * 2,
@@ -277,7 +278,7 @@ func TestDiscovery(t *testing.T) {
 	resourcesCtx, resourcesCancel := context.WithCancel(context.Background())
 	defer resourcesCancel()
 
-	nodeA, err := NewNodeP2P(context.Background(), rollupCfg, logA, &confA, &mockGossipIn{}, runCfgA, nil)
+	nodeA, err := NewNodeP2P(context.Background(), rollupCfg, logA, &confA, &mockGossipIn{}, nil, runCfgA, metrics.NoopMetrics)
 	require.NoError(t, err)
 	defer nodeA.Close()
 	hostA := nodeA.Host()
@@ -292,7 +293,7 @@ func TestDiscovery(t *testing.T) {
 	confB.DiscoveryDB = discDBC
 
 	// Start B
-	nodeB, err := NewNodeP2P(context.Background(), rollupCfg, logB, &confB, &mockGossipIn{}, runCfgB, nil)
+	nodeB, err := NewNodeP2P(context.Background(), rollupCfg, logB, &confB, &mockGossipIn{}, nil, runCfgB, metrics.NoopMetrics)
 	require.NoError(t, err)
 	defer nodeB.Close()
 	hostB := nodeB.Host()
@@ -307,7 +308,7 @@ func TestDiscovery(t *testing.T) {
 		}})
 
 	// Start C
-	nodeC, err := NewNodeP2P(context.Background(), rollupCfg, logC, &confC, &mockGossipIn{}, runCfgC, nil)
+	nodeC, err := NewNodeP2P(context.Background(), rollupCfg, logC, &confC, &mockGossipIn{}, nil, runCfgC, metrics.NoopMetrics)
 	require.NoError(t, err)
 	defer nodeC.Close()
 	hostC := nodeC.Host()
@@ -317,7 +318,7 @@ func TestDiscovery(t *testing.T) {
 	// It should only be a matter of time for them to connect, if they discover each other via A.
 	timeout := time.After(time.Second * 60)
 	var peersOfB []peer.ID
-	// B should be connected to the bootnode (A) it used (it's a valid mantle node to connect to here)
+	// B should be connected to the bootnode (A) it used (it's a valid optimism node to connect to here)
 	// C should also be connected, although this one might take more time to discover
 	for !slices.Contains(peersOfB, hostA.ID()) || !slices.Contains(peersOfB, hostC.ID()) {
 		select {

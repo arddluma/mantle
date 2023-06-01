@@ -27,7 +27,7 @@ var (
 	ErrInvalidImmutablesConfig = errors.New("invalid immutables config")
 )
 
-// DeployConfig represents the deployment configuration for Mantle
+// DeployConfig represents the deployment configuration for Optimism
 type DeployConfig struct {
 	L1StartingBlockTag *MarshalableRPCBlockNumberOrHash `json:"l1StartingBlockTag"`
 	L1ChainID          uint64                           `json:"l1ChainID"`
@@ -76,6 +76,8 @@ type DeployConfig struct {
 	ProxyAdminOwner common.Address `json:"proxyAdminOwner"`
 	// Owner of the system on L1
 	FinalSystemOwner common.Address `json:"finalSystemOwner"`
+	// GUARDIAN account in the OptimismPortal
+	PortalGuardian common.Address `json:"portalGuardian"`
 	// L1 recipient of fees accumulated in the BaseFeeVault
 	BaseFeeVaultRecipient common.Address `json:"baseFeeVaultRecipient"`
 	// L1 recipient of fees accumulated in the L1FeeVault
@@ -90,8 +92,8 @@ type DeployConfig struct {
 	L1ERC721BridgeProxy common.Address `json:"l1ERC721BridgeProxy"`
 	// SystemConfig proxy address on L1
 	SystemConfigProxy common.Address `json:"systemConfigProxy"`
-	// MantlePortal proxy address on L1
-	MantlePortalProxy common.Address `json:"MantlePortalProxy"`
+	// OptimismPortal proxy address on L1
+	OptimismPortalProxy common.Address `json:"optimismPortalProxy"`
 	// The initial value of the gas overhead
 	GasPriceOracleOverhead uint64 `json:"gasPriceOracleOverhead"`
 	// The initial value of the gas scalar
@@ -127,6 +129,9 @@ func (d *DeployConfig) Check() error {
 	}
 	if d.FinalizationPeriodSeconds == 0 {
 		return fmt.Errorf("%w: FinalizationPeriodSeconds cannot be 0", ErrInvalidDeployConfig)
+	}
+	if d.PortalGuardian == (common.Address{}) {
+		return fmt.Errorf("%w: PortalGuardian cannot be address(0)", ErrInvalidDeployConfig)
 	}
 	if d.MaxSequencerDrift == 0 {
 		return fmt.Errorf("%w: MaxSequencerDrift cannot be 0", ErrInvalidDeployConfig)
@@ -191,8 +196,8 @@ func (d *DeployConfig) Check() error {
 	if d.SystemConfigProxy == (common.Address{}) {
 		return fmt.Errorf("%w: SystemConfigProxy cannot be address(0)", ErrInvalidDeployConfig)
 	}
-	if d.MantlePortalProxy == (common.Address{}) {
-		return fmt.Errorf("%w: MantlePortalProxy cannot be address(0)", ErrInvalidDeployConfig)
+	if d.OptimismPortalProxy == (common.Address{}) {
+		return fmt.Errorf("%w: OptimismPortalProxy cannot be address(0)", ErrInvalidDeployConfig)
 	}
 	if d.EIP1559Denominator == 0 {
 		return fmt.Errorf("%w: EIP1559Denominator cannot be 0", ErrInvalidDeployConfig)
@@ -202,6 +207,11 @@ func (d *DeployConfig) Check() error {
 	}
 	if d.L2GenesisBlockGasLimit == 0 {
 		return fmt.Errorf("%w: L2 genesis block gas limit cannot be 0", ErrInvalidDeployConfig)
+	}
+	// When the initial resource config is made to be configurable by the DeployConfig, ensure
+	// that this check is updated to use the values from the DeployConfig instead of the defaults.
+	if uint64(d.L2GenesisBlockGasLimit) < uint64(defaultResourceConfig.MaxResourceLimit+defaultResourceConfig.SystemTxMaxGas) {
+		return fmt.Errorf("%w: L2 genesis block gas limit is too small", ErrInvalidDeployConfig)
 	}
 	if d.L2GenesisBlockBaseFeePerGas == nil {
 		return fmt.Errorf("%w: L2 genesis block base fee per gas cannot be nil", ErrInvalidDeployConfig)
@@ -227,7 +237,7 @@ func (d *DeployConfig) GetDeployedAddresses(hh *hardhat.Hardhat) error {
 
 	if d.L1StandardBridgeProxy == (common.Address{}) {
 		var l1StandardBridgeProxyDeployment *hardhat.Deployment
-		l1StandardBridgeProxyDeployment, err = hh.GetDeployment("Proxy__BVM_L1StandardBridge")
+		l1StandardBridgeProxyDeployment, err = hh.GetDeployment("Proxy__OVM_L1StandardBridge")
 		if errors.Is(err, hardhat.ErrCannotFindDeployment) {
 			l1StandardBridgeProxyDeployment, err = hh.GetDeployment("L1StandardBridgeProxy")
 			if err != nil {
@@ -239,7 +249,7 @@ func (d *DeployConfig) GetDeployedAddresses(hh *hardhat.Hardhat) error {
 
 	if d.L1CrossDomainMessengerProxy == (common.Address{}) {
 		var l1CrossDomainMessengerProxyDeployment *hardhat.Deployment
-		l1CrossDomainMessengerProxyDeployment, err = hh.GetDeployment("Proxy__BVM_L1CrossDomainMessenger")
+		l1CrossDomainMessengerProxyDeployment, err = hh.GetDeployment("Proxy__OVM_L1CrossDomainMessenger")
 		if errors.Is(err, hardhat.ErrCannotFindDeployment) {
 			l1CrossDomainMessengerProxyDeployment, err = hh.GetDeployment("L1CrossDomainMessengerProxy")
 			if err != nil {
@@ -266,12 +276,12 @@ func (d *DeployConfig) GetDeployedAddresses(hh *hardhat.Hardhat) error {
 		d.SystemConfigProxy = systemConfigProxyDeployment.Address
 	}
 
-	if d.MantlePortalProxy == (common.Address{}) {
-		MantlePortalProxyDeployment, err := hh.GetDeployment("MantlePortalProxy")
+	if d.OptimismPortalProxy == (common.Address{}) {
+		optimismPortalProxyDeployment, err := hh.GetDeployment("OptimismPortalProxy")
 		if err != nil {
 			return err
 		}
-		d.MantlePortalProxy = MantlePortalProxyDeployment.Address
+		d.OptimismPortalProxy = optimismPortalProxyDeployment.Address
 	}
 
 	return nil
@@ -282,7 +292,7 @@ func (d *DeployConfig) InitDeveloperDeployedAddresses() error {
 	d.L1StandardBridgeProxy = predeploys.DevL1StandardBridgeAddr
 	d.L1CrossDomainMessengerProxy = predeploys.DevL1CrossDomainMessengerAddr
 	d.L1ERC721BridgeProxy = predeploys.DevL1ERC721BridgeAddr
-	d.MantlePortalProxy = predeploys.DevMantlePortalAddr
+	d.OptimismPortalProxy = predeploys.DevMantlePortalAddr
 	d.SystemConfigProxy = predeploys.DevSystemConfigAddr
 	return nil
 }
@@ -300,8 +310,8 @@ func (d *DeployConfig) RegolithTime(genesisTime uint64) *uint64 {
 
 // RollupConfig converts a DeployConfig to a rollup.Config
 func (d *DeployConfig) RollupConfig(l1StartBlock *types.Block, l2GenesisBlockHash common.Hash, l2GenesisBlockNumber uint64) (*rollup.Config, error) {
-	if d.MantlePortalProxy == (common.Address{}) {
-		return nil, errors.New("MantlePortalProxy cannot be address(0)")
+	if d.OptimismPortalProxy == (common.Address{}) {
+		return nil, errors.New("OptimismPortalProxy cannot be address(0)")
 	}
 	if d.SystemConfigProxy == (common.Address{}) {
 		return nil, errors.New("SystemConfigProxy cannot be address(0)")
@@ -332,7 +342,7 @@ func (d *DeployConfig) RollupConfig(l1StartBlock *types.Block, l2GenesisBlockHas
 		L1ChainID:              new(big.Int).SetUint64(d.L1ChainID),
 		L2ChainID:              new(big.Int).SetUint64(d.L2ChainID),
 		BatchInboxAddress:      d.BatchInboxAddress,
-		DepositContractAddress: d.MantlePortalProxy,
+		DepositContractAddress: d.OptimismPortalProxy,
 		L1SystemConfigAddress:  d.SystemConfigProxy,
 		RegolithTime:           d.RegolithTime(l1StartBlock.Time()),
 	}, nil
@@ -395,7 +405,7 @@ func NewL2ImmutableConfig(config *DeployConfig, block *types.Block) (immutables.
 		"messenger":   predeploys.L2CrossDomainMessengerAddr,
 		"otherBridge": config.L1ERC721BridgeProxy,
 	}
-	immutable["MantleMintableERC721Factory"] = immutables.ImmutableValues{
+	immutable["OptimismMintableERC721Factory"] = immutables.ImmutableValues{
 		"bridge":        predeploys.L2ERC721BridgeAddr,
 		"remoteChainId": new(big.Int).SetUint64(config.L1ChainID),
 	}
@@ -442,8 +452,6 @@ func NewL2StorageConfig(config *DeployConfig, block *types.Block) (state.Storage
 		"batcherHash":    config.BatchSenderAddress.Hash(),
 		"l1FeeOverhead":  config.GasPriceOracleOverhead,
 		"l1FeeScalar":    config.GasPriceOracleScalar,
-		"daFee":          block.BaseFee(),
-		"daFeeScalar":    config.GasPriceOracleScalar,
 	}
 	storage["LegacyERC20ETH"] = state.StorageValues{
 		"_name":   "Ether",
@@ -489,4 +497,19 @@ func (m *MarshalableRPCBlockNumberOrHash) UnmarshalJSON(b []byte) error {
 	asMarshalable := MarshalableRPCBlockNumberOrHash(r)
 	*m = asMarshalable
 	return nil
+}
+
+// Number wraps the rpc.BlockNumberOrHash Number method.
+func (m *MarshalableRPCBlockNumberOrHash) Number() (rpc.BlockNumber, bool) {
+	return (*rpc.BlockNumberOrHash)(m).Number()
+}
+
+// Hash wraps the rpc.BlockNumberOrHash Hash method.
+func (m *MarshalableRPCBlockNumberOrHash) Hash() (common.Hash, bool) {
+	return (*rpc.BlockNumberOrHash)(m).Hash()
+}
+
+// String wraps the rpc.BlockNumberOrHash String method.
+func (m *MarshalableRPCBlockNumberOrHash) String() string {
+	return (*rpc.BlockNumberOrHash)(m).String()
 }

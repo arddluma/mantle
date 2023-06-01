@@ -7,6 +7,7 @@ import (
 	"github.com/urfave/cli"
 
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/mantlenetworkio/mantle/mt-proposer/cmd/doc"
 	"github.com/mantlenetworkio/mantle/mt-proposer/flags"
 	"github.com/mantlenetworkio/mantle/mt-proposer/proposer"
 	oplog "github.com/mantlenetworkio/mantle/mt-service/log"
@@ -24,11 +25,17 @@ func main() {
 	app := cli.NewApp()
 	app.Flags = flags.Flags
 	app.Version = fmt.Sprintf("%s-%s-%s", Version, GitCommit, GitDate)
-	app.Name = "mt-proposer"
+	app.Name = "op-proposer"
 	app.Usage = "L2Output Submitter"
 	app.Description = "Service for generating and submitting L2 Output checkpoints to the L2OutputOracle contract"
-
 	app.Action = curryMain(Version)
+	app.Commands = []cli.Command{
+		{
+			Name:        "doc",
+			Subcommands: doc.Subcommands,
+		},
+	}
+
 	err := app.Run(os.Args)
 	if err != nil {
 		log.Crit("Application failed", "message", err)

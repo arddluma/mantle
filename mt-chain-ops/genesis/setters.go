@@ -132,7 +132,7 @@ func setProxies(db vm.StateDB, proxyAdminAddr common.Address, namespace *big.Int
 }
 
 func SetLegacyETH(db vm.StateDB, storage state.StorageConfig, immutable immutables.ImmutableConfig) error {
-	deployResults, err := immutables.BuildMantle(immutable)
+	deployResults, err := immutables.BuildOptimism(immutable)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func SetLegacyETH(db vm.StateDB, storage state.StorageConfig, immutable immutabl
 // and configure the proxies to point to the implementations. It also sets
 // the appropriate storage values for each contract at the proxy address.
 func SetImplementations(db vm.StateDB, storage state.StorageConfig, immutable immutables.ImmutableConfig) error {
-	deployResults, err := immutables.BuildMantle(immutable)
+	deployResults, err := immutables.BuildOptimism(immutable)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func SetImplementations(db vm.StateDB, storage state.StorageConfig, immutable im
 }
 
 func SetDevOnlyL2Implementations(db vm.StateDB, storage state.StorageConfig, immutable immutables.ImmutableConfig) error {
-	deployResults, err := immutables.BuildMantle(immutable)
+	deployResults, err := immutables.BuildOptimism(immutable)
 	if err != nil {
 		return err
 	}

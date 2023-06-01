@@ -3,28 +3,24 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
 	"strings"
 
-	"github.com/mantlenetworkio/mantle/mt-chain-ops/db"
-	"github.com/mattn/go-isatty"
-
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/mantlenetworkio/mantle/mt-chain-ops/crossdomain"
+	"github.com/mantlenetworkio/mantle/mt-chain-ops/db"
 	"github.com/mantlenetworkio/mantle/mt-node/eth"
 	"github.com/mantlenetworkio/mantle/mt-node/rollup/derive"
-
-	"github.com/ethereum/go-ethereum/core/types"
-
-	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/mantlenetworkio/mantle/mt-bindings/hardhat"
 
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis"
-	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis/migration"
-
 	"github.com/urfave/cli"
 )
 
@@ -62,8 +58,8 @@ func main() {
 				Required: true,
 			},
 			&cli.StringFlag{
-				Name:     "evm-messages",
-				Usage:    "Path to evm-messages.json",
+				Name:     "witness-file",
+				Usage:    "Path to witness file",
 				Required: true,
 			},
 			&cli.StringFlag{
@@ -106,9 +102,14 @@ func main() {
 			},
 			cli.StringFlag{
 				Name:     "rollup-config-out",
-				Usage:    "Path that mt-node config will be written to disk",
+				Usage:    "Path that op-node config will be written to disk",
 				Value:    "rollup.json",
 				Required: true,
+			},
+			cli.BoolFlag{
+				Name:     "post-check-only",
+				Usage:    "Only perform sanity checks",
+				Required: false,
 			},
 		},
 		Action: func(ctx *cli.Context) error {
@@ -118,32 +119,37 @@ func main() {
 				return err
 			}
 
-			bvmAddresses, err := migration.NewAddresses(ctx.String("bvm-addresses"))
+			ovmAddresses, err := crossdomain.NewAddresses(ctx.String("ovm-addresses"))
 			if err != nil {
 				return err
 			}
-			evmAddresess, err := migration.NewAddresses(ctx.String("evm-addresses"))
+			ovmAllowances, err := crossdomain.NewAllowances(ctx.String("ovm-allowances"))
 			if err != nil {
 				return err
 			}
-			bvmAllowances, err := migration.NewAllowances(ctx.String("bvm-allowances"))
+			ovmMessages, err := crossdomain.NewSentMessageFromJSON(ctx.String("ovm-messages"))
 			if err != nil {
 				return err
 			}
-			bvmMessages, err := migration.NewSentMessage(ctx.String("bvm-messages"))
-			if err != nil {
-				return err
-			}
-			evmMessages, err := migration.NewSentMessage(ctx.String("evm-messages"))
+			evmMessages, evmAddresses, err := crossdomain.ReadWitnessData(ctx.String("witness-file"))
 			if err != nil {
 				return err
 			}
 
-			migrationData := migration.MigrationData{
-				BvmAddresses:  bvmAddresses,
-				EvmAddresses:  evmAddresess,
-				BvmAllowances: bvmAllowances,
-				BvmMessages:   bvmMessages,
+			log.Info(
+				"Loaded witness data",
+				"ovmAddresses", len(ovmAddresses),
+				"evmAddresses", len(evmAddresses),
+				"ovmAllowances", len(ovmAllowances),
+				"ovmMessages", len(ovmMessages),
+				"evmMessages", len(evmMessages),
+			)
+
+			migrationData := crossdomain.MigrationData{
+				BvmAddresses:  ovmAddresses,
+				EvmAddresses:  evmAddresses,
+				BvmAllowances: ovmAllowances,
+				BvmMessages:   ovmMessages,
 				EvmMessages:   evmMessages,
 			}
 
@@ -162,10 +168,14 @@ func main() {
 
 			var block *types.Block
 			tag := config.L1StartingBlockTag
-			if tag.BlockNumber != nil {
-				block, err = l1Client.BlockByNumber(context.Background(), big.NewInt(tag.BlockNumber.Int64()))
-			} else if tag.BlockHash != nil {
-				block, err = l1Client.BlockByHash(context.Background(), *tag.BlockHash)
+			if tag == nil {
+				return errors.New("l1StartingBlockTag cannot be nil")
+			}
+			log.Info("Using L1 Starting Block Tag", "tag", tag.String())
+			if number, isNumber := tag.Number(); isNumber {
+				block, err = l1Client.BlockByNumber(context.Background(), big.NewInt(number.Int64()))
+			} else if hash, isHash := tag.Hash(); isHash {
+				block, err = l1Client.BlockByHash(context.Background(), hash)
 			} else {
 				return fmt.Errorf("invalid l1StartingBlockTag in deploy config: %v", tag)
 			}
@@ -212,6 +222,7 @@ func main() {
 				migrationData,
 				&config.L1CrossDomainMessengerProxy,
 				config.L1ChainID,
+				config.L2ChainID,
 				config.FinalSystemOwner,
 				config.ProxyAdminOwner,
 				&derive.L1BlockInfo{

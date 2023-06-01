@@ -84,7 +84,7 @@ func NewNodeAPI(config *rollup.Config, l2Client l2EthClient, dr driverClient, lo
 }
 
 func (n *nodeAPI) OutputAtBlock(ctx context.Context, number hexutil.Uint64) (*eth.OutputResponse, error) {
-	recordDur := n.m.RecordRPCServerRequest("mantle_outputAtBlock")
+	recordDur := n.m.RecordRPCServerRequest("optimism_outputAtBlock")
 	defer recordDur()
 
 	ref, status, err := n.dr.BlockRefWithStatus(ctx, uint64(number))
@@ -114,7 +114,11 @@ func (n *nodeAPI) OutputAtBlock(ctx context.Context, number hexutil.Uint64) (*et
 	}
 
 	var l2OutputRootVersion eth.Bytes32 // it's zero for now
-	l2OutputRoot := rollup.ComputeL2OutputRoot(l2OutputRootVersion, head.Hash(), head.Root(), proof.StorageHash)
+	l2OutputRoot, err := rollup.ComputeL2OutputRootV0(head, proof.StorageHash)
+	if err != nil {
+		n.log.Error("Error computing L2 output root, nil ptr passed to hashing function")
+		return nil, err
+	}
 
 	return &eth.OutputResponse{
 		Version:               l2OutputRootVersion,
@@ -127,19 +131,19 @@ func (n *nodeAPI) OutputAtBlock(ctx context.Context, number hexutil.Uint64) (*et
 }
 
 func (n *nodeAPI) SyncStatus(ctx context.Context) (*eth.SyncStatus, error) {
-	recordDur := n.m.RecordRPCServerRequest("mantle_syncStatus")
+	recordDur := n.m.RecordRPCServerRequest("optimism_syncStatus")
 	defer recordDur()
 	return n.dr.SyncStatus(ctx)
 }
 
 func (n *nodeAPI) RollupConfig(_ context.Context) (*rollup.Config, error) {
-	recordDur := n.m.RecordRPCServerRequest("mantle_rollupConfig")
+	recordDur := n.m.RecordRPCServerRequest("optimism_rollupConfig")
 	defer recordDur()
 	return n.config, nil
 }
 
 func (n *nodeAPI) Version(ctx context.Context) (string, error) {
-	recordDur := n.m.RecordRPCServerRequest("mantle_version")
+	recordDur := n.m.RecordRPCServerRequest("optimism_version")
 	defer recordDur()
 	return version.Version + "-" + version.Meta, nil
 }

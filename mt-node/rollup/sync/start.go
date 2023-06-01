@@ -6,7 +6,7 @@
 // a parent block and the node is responsible for deciding which block is the head and thus the
 // mapping from block number to canonical block.
 //
-// The Mantle (L2) chain has similar properties, but also retains references to the Ethereum (L1)
+// The Optimism (L2) chain has similar properties, but also retains references to the Ethereum (L1)
 // chain. Each L2 block retains a reference to an L1 block (its "L1 origin", i.e. L1 block
 // associated with the epoch that the L2 block belongs to) and to its parent L2 block. The L2 chain
 // node must satisfy the following validity rules:
@@ -93,9 +93,9 @@ func currentHeads(ctx context.Context, cfg *rollup.Config, l2 L2Chain) (*FindHea
 // the finalized, unsafe and safe L2 blocks.
 //
 //   - The *unsafe L2 block*: This is the highest L2 block whose L1 origin is a *plausible*
-//     extension of the canonical L1 chain (as known to the mt-node).
+//     extension of the canonical L1 chain (as known to the op-node).
 //   - The *safe L2 block*: This is the highest L2 block whose epoch's sequencing window is
-//     complete within the canonical L1 chain (as known to the mt-node).
+//     complete within the canonical L1 chain (as known to the op-node).
 //   - The *finalized L2 block*: This is the L2 block which is known to be fully derived from
 //     finalized L1 block data.
 //
@@ -108,6 +108,9 @@ func FindL2Heads(ctx context.Context, cfg *rollup.Config, l1 L1Chain, l2 L2Chain
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch current L2 forkchoice state: %w", err)
 	}
+
+	lgr.Info("Loaded current L2 heads", "unsafe", result.Unsafe, "safe", result.Safe, "finalized", result.Finalized,
+		"unsafe_origin", result.Unsafe.L1Origin, "safe_origin", result.Safe.L1Origin)
 
 	// Remember original unsafe block to determine reorg depth
 	prevUnsafe := result.Unsafe
@@ -126,8 +129,18 @@ func FindL2Heads(ctx context.Context, cfg *rollup.Config, l1 L1Chain, l2 L2Chain
 	// then we return the last L2 block of the epoch before that as safe head.
 	// Each loop iteration we traverse a single L2 block, and we check if the L1 origins are consistent.
 	for {
-		// Fetch L1 information if we never had it, or if we do not have it for the current origin
-		if l1Block == (eth.L1BlockRef{}) || n.L1Origin.Hash != l1Block.Hash {
+		// Fetch L1 information if we never had it, or if we do not have it for the current origin.
+		// Optimization: as soon as we have a previous L1 block, try to traverse L1 by hash instead of by number, to fill the cache.
+		if n.L1Origin.Hash == l1Block.ParentHash {
+			b, err := l1.L1BlockRefByHash(ctx, n.L1Origin.Hash)
+			if err != nil {
+				// Exit, find-sync start should start over, to move to an available L1 chain with block-by-number / not-found case.
+				return nil, fmt.Errorf("failed to retrieve L1 block: %w", err)
+			}
+			lgr.Info("Walking back L1Block by hash", "curr", l1Block, "next", b, "l2block", n)
+			l1Block = b
+			ahead = false
+		} else if l1Block == (eth.L1BlockRef{}) || n.L1Origin.Hash != l1Block.Hash {
 			b, err := l1.L1BlockRefByNumber(ctx, n.L1Origin.Number)
 			// if L2 is ahead of L1 view, then consider it a "plausible" head
 			notFound := errors.Is(err, ethereum.NotFound)
@@ -136,9 +149,10 @@ func FindL2Heads(ctx context.Context, cfg *rollup.Config, l1 L1Chain, l2 L2Chain
 			}
 			l1Block = b
 			ahead = notFound
+			lgr.Info("Walking back L1Block by number", "curr", l1Block, "next", b, "l2block", n)
 		}
 
-		lgr.Trace("walking sync start", "number", n.Number)
+		lgr.Trace("walking sync start", "l2block", n)
 
 		// Don't walk past genesis. If we were at the L2 genesis, but could not find its L1 origin,
 		// the L2 chain is building on the wrong L1 branch.
@@ -192,6 +206,8 @@ func FindL2Heads(ctx context.Context, cfg *rollup.Config, l1 L1Chain, l2 L2Chain
 
 		// Don't traverse further than the finalized head to find a safe head
 		if n.Number == result.Finalized.Number {
+			lgr.Info("Hit finalized L2 head, returning immediately", "unsafe", result.Unsafe, "safe", result.Safe,
+				"finalized", result.Finalized, "unsafe_origin", result.Unsafe.L1Origin, "safe_origin", result.Safe.L1Origin)
 			result.Safe = n
 			return result, nil
 		}

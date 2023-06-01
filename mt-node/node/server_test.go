@@ -115,11 +115,11 @@ func TestOutputAtBlock(t *testing.T) {
 	require.NoError(t, server.Start())
 	defer server.Stop()
 
-	client, err := rpcclient.DialRPCClientWithBackoff(context.Background(), log, "http://"+server.Addr().String())
+	client, err := rpcclient.NewRPC(context.Background(), log, "http://"+server.Addr().String(), rpcclient.WithDialBackoff(3))
 	require.NoError(t, err)
 
 	var out *eth.OutputResponse
-	err = client.CallContext(context.Background(), &out, "mantle_outputAtBlock", "0xdcdc89")
+	err = client.CallContext(context.Background(), &out, "optimism_outputAtBlock", "0xdcdc89")
 	require.NoError(t, err)
 
 	require.Equal(t, "0x0000000000000000000000000000000000000000000000000000000000000000", out.Version.String())
@@ -147,11 +147,11 @@ func TestVersion(t *testing.T) {
 	assert.NoError(t, server.Start())
 	defer server.Stop()
 
-	client, err := rpcclient.DialRPCClientWithBackoff(context.Background(), log, "http://"+server.Addr().String())
+	client, err := rpcclient.NewRPC(context.Background(), log, "http://"+server.Addr().String(), rpcclient.WithDialBackoff(3))
 	assert.NoError(t, err)
 
 	var out string
-	err = client.CallContext(context.Background(), &out, "mantle_version")
+	err = client.CallContext(context.Background(), &out, "optimism_version")
 	assert.NoError(t, err)
 	assert.Equal(t, version.Version+"-"+version.Meta, out)
 }
@@ -166,6 +166,7 @@ func randomSyncStatus(rng *rand.Rand) *eth.SyncStatus {
 		UnsafeL2:           testutils.RandomL2BlockRef(rng),
 		SafeL2:             testutils.RandomL2BlockRef(rng),
 		FinalizedL2:        testutils.RandomL2BlockRef(rng),
+		UnsafeL2SyncTarget: testutils.RandomL2BlockRef(rng),
 	}
 }
 
@@ -189,11 +190,11 @@ func TestSyncStatus(t *testing.T) {
 	assert.NoError(t, server.Start())
 	defer server.Stop()
 
-	client, err := rpcclient.DialRPCClientWithBackoff(context.Background(), log, "http://"+server.Addr().String())
+	client, err := rpcclient.NewRPC(context.Background(), log, "http://"+server.Addr().String(), rpcclient.WithDialBackoff(3))
 	assert.NoError(t, err)
 
 	var out *eth.SyncStatus
-	err = client.CallContext(context.Background(), &out, "mantle_syncStatus")
+	err = client.CallContext(context.Background(), &out, "optimism_syncStatus")
 	assert.NoError(t, err)
 	assert.Equal(t, status, out)
 }

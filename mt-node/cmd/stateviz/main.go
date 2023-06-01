@@ -20,7 +20,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/mantlenetworkio/mantle/mt-node/eth"
-	ophttp "github.com/mantlenetworkio/mantle/mt-node/http"
+	mthttp "github.com/mantlenetworkio/mantle/mt-node/http"
 )
 
 var (
@@ -162,7 +162,7 @@ func runServer() {
 	mux.HandleFunc("/logs", makeGzipHandler(logsHandler))
 
 	log.Info("running webserver...")
-	httpServer := ophttp.NewHttpServer(mux)
+	httpServer := mthttp.NewHttpServer(mux)
 	if err := httpServer.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Crit("http server failed", "message", err)
 	}

@@ -5,10 +5,11 @@ import (
 	"math/big"
 	"path/filepath"
 
+	"github.com/mantlenetworkio/mantle/mt-chain-ops/crossdomain"
+
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis"
-	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis/migration"
 )
 
 type Config struct {
@@ -30,28 +31,28 @@ type Config struct {
 func Migrate(cfg *Config) (*genesis.MigrationResult, error) {
 	deployConfig := cfg.DeployConfig
 
-	bvmAddresses, err := migration.NewAddresses(cfg.BVMAddressesPath)
+	bvmAddresses, err := crossdomain.NewAddresses(cfg.BVMAddressesPath)
 	if err != nil {
 		return nil, err
 	}
-	evmAddresess, err := migration.NewAddresses(cfg.EVMAddressesPath)
+	evmAddresess, err := crossdomain.NewAddresses(cfg.EVMAddressesPath)
 	if err != nil {
 		return nil, err
 	}
-	bvmAllowances, err := migration.NewAllowances(cfg.BVMAllowancesPath)
+	bvmAllowances, err := crossdomain.NewAllowances(cfg.BVMAllowancesPath)
 	if err != nil {
 		return nil, err
 	}
-	bvmMessages, err := migration.NewSentMessage(cfg.BVMMessagesPath)
+	bvmMessages, err := crossdomain.NewSentMessageFromJSON(cfg.BVMMessagesPath)
 	if err != nil {
 		return nil, err
 	}
-	evmMessages, err := migration.NewSentMessage(cfg.EVMMessagesPath)
+	evmMessages, err := crossdomain.NewSentMessageFromJSON(cfg.EVMMessagesPath)
 	if err != nil {
 		return nil, err
 	}
 
-	migrationData := migration.MigrationData{
+	migrationData := crossdomain.MigrationData{
 		BvmAddresses:  bvmAddresses,
 		EvmAddresses:  evmAddresess,
 		BvmAllowances: bvmAllowances,

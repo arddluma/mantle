@@ -35,7 +35,7 @@ func newRPCServer(ctx context.Context, rpcCfg *RPCConfig, rollupCfg *rollup.Conf
 	r := &rpcServer{
 		endpoint: endpoint,
 		apis: []rpc.API{{
-			Namespace:     "mantle",
+			Namespace:     "optimism",
 			Service:       api,
 			Public:        true,
 			Authenticated: false,
@@ -73,9 +73,9 @@ func (s *rpcServer) Start() error {
 	}
 
 	// The CORS and VHosts arguments below must be set in order for
-	// other services to connect to the mtnode. VHosts in particular
+	// other services to connect to the opnode. VHosts in particular
 	// defaults to localhost, which will prevent containers from
-	// calling into the mtnode without an "invalid host" error.
+	// calling into the opnode without an "invalid host" error.
 	nodeHandler := node.NewHTTPHandlerStack(srv, []string{"*"}, []string{"*"}, nil)
 
 	mux := http.NewServeMux()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mantlenetworkio/mantle/mt-node/rollup/derive"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -14,7 +13,6 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 
-	"github.com/mantlenetworkio/mantle/mt-node/chaincfg"
 	"github.com/mantlenetworkio/mantle/mt-node/client"
 	"github.com/mantlenetworkio/mantle/mt-node/eth"
 	"github.com/mantlenetworkio/mantle/mt-node/metrics"
@@ -23,7 +21,7 @@ import (
 	"github.com/mantlenetworkio/mantle/mt-node/sources"
 )
 
-type MtNode struct {
+type OpNode struct {
 	log        log.Logger
 	appVersion string
 	metrics    *metrics.Metrics
@@ -35,6 +33,7 @@ type MtNode struct {
 	l1Source  *sources.L1Client     // L1 Client to fetch data from
 	l2Driver  *driver.Driver        // L2 Engine to Sync
 	l2Source  *sources.EngineClient // L2 Execution Engine RPC bindings
+	rpcSync   *sources.SyncClient   // Alt-sync RPC client, optional (may be nil)
 	server    *rpcServer            // RPC server hosting the rollup-node API
 	p2pNode   *p2p.NodeP2P          // P2P node functionality
 	p2pSigner p2p.Signer            // p2p gogssip application messages will be signed with this signer
@@ -47,23 +46,21 @@ type MtNode struct {
 	resourcesClose context.CancelFunc
 }
 
-// The MtNode handles incoming gossip
-var _ p2p.GossipIn = (*MtNode)(nil)
+// The OpNode handles incoming gossip
+var _ p2p.GossipIn = (*OpNode)(nil)
 
-func New(ctx context.Context, cfg *Config, log log.Logger, snapshotLog log.Logger, appVersion string, m *metrics.Metrics) (*MtNode, error) {
+func New(ctx context.Context, cfg *Config, log log.Logger, snapshotLog log.Logger, appVersion string, m *metrics.Metrics) (*OpNode, error) {
 	if err := cfg.Check(); err != nil {
 		return nil, err
 	}
 
-	n := &MtNode{
+	n := &OpNode{
 		log:        log,
 		appVersion: appVersion,
 		metrics:    m,
 	}
 	// not a context leak, gossipsub is closed with a context.
 	n.resourcesCtx, n.resourcesClose = context.WithCancel(context.Background())
-
-	log.Info("rollup config:\n" + cfg.Rollup.Description(chaincfg.L2ChainIDToNetworkName))
 
 	err := n.init(ctx, cfg, snapshotLog)
 	if err != nil {
@@ -77,7 +74,7 @@ func New(ctx context.Context, cfg *Config, log log.Logger, snapshotLog log.Logge
 	return n, nil
 }
 
-func (n *MtNode) init(ctx context.Context, cfg *Config, snapshotLog log.Logger) error {
+func (n *OpNode) init(ctx context.Context, cfg *Config, snapshotLog log.Logger) error {
 	if err := n.initTracer(ctx, cfg); err != nil {
 		return err
 	}
@@ -88,6 +85,9 @@ func (n *MtNode) init(ctx context.Context, cfg *Config, snapshotLog log.Logger) 
 		return err
 	}
 	if err := n.initL2(ctx, cfg, snapshotLog); err != nil {
+		return err
+	}
+	if err := n.initRPCSync(ctx, cfg); err != nil {
 		return err
 	}
 	if err := n.initP2PSigner(ctx, cfg); err != nil {
@@ -106,7 +106,7 @@ func (n *MtNode) init(ctx context.Context, cfg *Config, snapshotLog log.Logger) 
 	return nil
 }
 
-func (n *MtNode) initTracer(ctx context.Context, cfg *Config) error {
+func (n *OpNode) initTracer(ctx context.Context, cfg *Config) error {
 	if cfg.Tracer != nil {
 		n.tracer = cfg.Tracer
 	} else {
@@ -115,15 +115,14 @@ func (n *MtNode) initTracer(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-func (n *MtNode) initL1(ctx context.Context, cfg *Config) error {
-	l1Node, trustRPC, rpcProvKind, err := cfg.L1.Setup(ctx, n.log)
+func (n *OpNode) initL1(ctx context.Context, cfg *Config) error {
+	l1Node, rpcCfg, err := cfg.L1.Setup(ctx, n.log, &cfg.Rollup)
 	if err != nil {
 		return fmt.Errorf("failed to get L1 RPC client: %w", err)
 	}
 
 	n.l1Source, err = sources.NewL1Client(
-		client.NewInstrumentedRPC(l1Node, n.metrics), n.log, n.metrics.L1SourceCache,
-		sources.L1ClientDefaultConfig(&cfg.Rollup, trustRPC, rpcProvKind))
+		client.NewInstrumentedRPC(l1Node, n.metrics), n.log, n.metrics.L1SourceCache, rpcCfg)
 	if err != nil {
 		return fmt.Errorf("failed to create L1 source: %w", err)
 	}
@@ -156,7 +155,7 @@ func (n *MtNode) initL1(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-func (n *MtNode) initRuntimeConfig(ctx context.Context, cfg *Config) error {
+func (n *OpNode) initRuntimeConfig(ctx context.Context, cfg *Config) error {
 	// attempt to load runtime config, repeat N times
 	n.runCfg = NewRuntimeConfig(n.log, n.l1Source, &cfg.Rollup)
 
@@ -183,15 +182,14 @@ func (n *MtNode) initRuntimeConfig(ctx context.Context, cfg *Config) error {
 	return errors.New("failed to load runtime configuration repeatedly")
 }
 
-func (n *MtNode) initL2(ctx context.Context, cfg *Config, snapshotLog log.Logger) error {
-	rpcClient, err := cfg.L2.Setup(ctx, n.log)
+func (n *OpNode) initL2(ctx context.Context, cfg *Config, snapshotLog log.Logger) error {
+	rpcClient, rpcCfg, err := cfg.L2.Setup(ctx, n.log, &cfg.Rollup)
 	if err != nil {
 		return fmt.Errorf("failed to setup L2 execution-engine RPC client: %w", err)
 	}
 
 	n.l2Source, err = sources.NewEngineClient(
-		client.NewInstrumentedRPC(rpcClient, n.metrics), n.log, n.metrics.L2SourceCache,
-		sources.EngineClientDefaultConfig(&cfg.Rollup),
+		client.NewInstrumentedRPC(rpcClient, n.metrics), n.log, n.metrics.L2SourceCache, rpcCfg,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create Engine client: %w", err)
@@ -201,16 +199,28 @@ func (n *MtNode) initL2(ctx context.Context, cfg *Config, snapshotLog log.Logger
 		return err
 	}
 
-	tp := derive.NewTPClient(cfg.TPCfg.Url, cfg.TPCfg.SourceName, cfg.TPCfg.SecondFrequency)
-	if tp.IsNil() {
-		log.Crit("token price client is nil")
-	}
-	n.l2Driver = driver.NewDriver(&cfg.Driver, &cfg.Rollup, n.l2Source, n.l1Source, n, tp, n.log, snapshotLog, n.metrics)
+	n.l2Driver = driver.NewDriver(&cfg.Driver, &cfg.Rollup, n.l2Source, n.l1Source, n, n, n.log, snapshotLog, n.metrics)
 
 	return nil
 }
 
-func (n *MtNode) initRPCServer(ctx context.Context, cfg *Config) error {
+func (n *OpNode) initRPCSync(ctx context.Context, cfg *Config) error {
+	rpcSyncClient, rpcCfg, err := cfg.L2Sync.Setup(ctx, n.log, &cfg.Rollup)
+	if err != nil {
+		return fmt.Errorf("failed to setup L2 execution-engine RPC client for backup sync: %w", err)
+	}
+	if rpcSyncClient == nil { // if no RPC client is configured to sync from, then don't add the RPC sync client
+		return nil
+	}
+	syncClient, err := sources.NewSyncClient(n.OnUnsafeL2Payload, rpcSyncClient, n.log, n.metrics.L2SourceCache, rpcCfg)
+	if err != nil {
+		return fmt.Errorf("failed to create sync client: %w", err)
+	}
+	n.rpcSync = syncClient
+	return nil
+}
+
+func (n *OpNode) initRPCServer(ctx context.Context, cfg *Config) error {
 	server, err := newRPCServer(ctx, &cfg.RPC, &cfg.Rollup, n.l2Source.L2Client, n.l2Driver, n.log, n.appVersion, n.metrics)
 	if err != nil {
 		return err
@@ -230,7 +240,7 @@ func (n *MtNode) initRPCServer(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-func (n *MtNode) initMetricsServer(ctx context.Context, cfg *Config) error {
+func (n *OpNode) initMetricsServer(ctx context.Context, cfg *Config) error {
 	if !cfg.Metrics.Enabled {
 		n.log.Info("metrics disabled")
 		return nil
@@ -244,9 +254,9 @@ func (n *MtNode) initMetricsServer(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-func (n *MtNode) initP2P(ctx context.Context, cfg *Config) error {
+func (n *OpNode) initP2P(ctx context.Context, cfg *Config) error {
 	if cfg.P2P != nil {
-		p2pNode, err := p2p.NewNodeP2P(n.resourcesCtx, &cfg.Rollup, n.log, cfg.P2P, n, n.runCfg, n.metrics)
+		p2pNode, err := p2p.NewNodeP2P(n.resourcesCtx, &cfg.Rollup, n.log, cfg.P2P, n, n.l2Source, n.runCfg, n.metrics)
 		if err != nil || p2pNode == nil {
 			return err
 		}
@@ -258,7 +268,7 @@ func (n *MtNode) initP2P(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-func (n *MtNode) initP2PSigner(ctx context.Context, cfg *Config) error {
+func (n *OpNode) initP2PSigner(ctx context.Context, cfg *Config) error {
 	// the p2p signer setup is optional
 	if cfg.P2PSigner == nil {
 		return nil
@@ -269,19 +279,28 @@ func (n *MtNode) initP2PSigner(ctx context.Context, cfg *Config) error {
 	return err
 }
 
-func (n *MtNode) Start(ctx context.Context) error {
+func (n *OpNode) Start(ctx context.Context) error {
 	n.log.Info("Starting execution engine driver")
+
 	// start driving engine: sync blocks by deriving them from L1 and driving them into the engine
-	err := n.l2Driver.Start()
-	if err != nil {
+	if err := n.l2Driver.Start(); err != nil {
 		n.log.Error("Could not start a rollup node", "err", err)
 		return err
+	}
+
+	// If the backup unsafe sync client is enabled, start its event loop
+	if n.rpcSync != nil {
+		if err := n.rpcSync.Start(); err != nil {
+			n.log.Error("Could not start the backup sync client", "err", err)
+			return err
+		}
+		n.log.Info("Started L2-RPC sync service")
 	}
 
 	return nil
 }
 
-func (n *MtNode) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
+func (n *OpNode) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
 	n.tracer.OnNewL1Head(ctx, sig)
 
 	if n.l2Driver == nil {
@@ -295,7 +314,7 @@ func (n *MtNode) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
 	}
 }
 
-func (n *MtNode) OnNewL1Safe(ctx context.Context, sig eth.L1BlockRef) {
+func (n *OpNode) OnNewL1Safe(ctx context.Context, sig eth.L1BlockRef) {
 	if n.l2Driver == nil {
 		return
 	}
@@ -307,7 +326,7 @@ func (n *MtNode) OnNewL1Safe(ctx context.Context, sig eth.L1BlockRef) {
 	}
 }
 
-func (n *MtNode) OnNewL1Finalized(ctx context.Context, sig eth.L1BlockRef) {
+func (n *OpNode) OnNewL1Finalized(ctx context.Context, sig eth.L1BlockRef) {
 	if n.l2Driver == nil {
 		return
 	}
@@ -319,7 +338,7 @@ func (n *MtNode) OnNewL1Finalized(ctx context.Context, sig eth.L1BlockRef) {
 	}
 }
 
-func (n *MtNode) PublishL2Payload(ctx context.Context, payload *eth.ExecutionPayload) error {
+func (n *OpNode) PublishL2Payload(ctx context.Context, payload *eth.ExecutionPayload) error {
 	n.tracer.OnPublishL2Payload(ctx, payload)
 
 	// publish to p2p, if we are running p2p at all
@@ -334,7 +353,7 @@ func (n *MtNode) PublishL2Payload(ctx context.Context, payload *eth.ExecutionPay
 	return nil
 }
 
-func (n *MtNode) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayload) error {
+func (n *OpNode) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayload) error {
 	// ignore if it's from ourselves
 	if n.p2pNode != nil && from == n.p2pNode.Host().ID() {
 		return nil
@@ -354,12 +373,23 @@ func (n *MtNode) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *e
 	return nil
 }
 
-func (n *MtNode) P2P() p2p.Node {
+func (n *OpNode) RequestL2Range(ctx context.Context, start, end eth.L2BlockRef) error {
+	if n.rpcSync != nil {
+		return n.rpcSync.RequestL2Range(ctx, start, end)
+	}
+	if n.p2pNode != nil && n.p2pNode.AltSyncEnabled() {
+		return n.p2pNode.RequestL2Range(ctx, start, end)
+	}
+	n.log.Debug("ignoring request to sync L2 range, no sync method available", "start", start, "end", end)
+	return nil
+}
+
+func (n *OpNode) P2P() p2p.Node {
 	return n.p2pNode
 }
 
 // Close closes all resources.
-func (n *MtNode) Close() error {
+func (n *OpNode) Close() error {
 	var result *multierror.Error
 
 	if n.server != nil {
@@ -390,6 +420,13 @@ func (n *MtNode) Close() error {
 		if err := n.l2Driver.Close(); err != nil {
 			result = multierror.Append(result, fmt.Errorf("failed to close L2 engine driver cleanly: %w", err))
 		}
+
+		// If the L2 sync client is present & running, close it.
+		if n.rpcSync != nil {
+			if err := n.rpcSync.Close(); err != nil {
+				result = multierror.Append(result, fmt.Errorf("failed to close L2 engine backup sync client cleanly: %w", err))
+			}
+		}
 	}
 
 	// close L2 engine RPC client
@@ -404,10 +441,10 @@ func (n *MtNode) Close() error {
 	return result.ErrorOrNil()
 }
 
-func (n *MtNode) ListenAddr() string {
+func (n *OpNode) ListenAddr() string {
 	return n.server.listenAddr.String()
 }
 
-func (n *MtNode) HTTPEndpoint() string {
+func (n *OpNode) HTTPEndpoint() string {
 	return fmt.Sprintf("http://%s", n.ListenAddr())
 }

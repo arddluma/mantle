@@ -1,29 +1,36 @@
 package rollup
 
 import (
-	"github.com/ethereum/go-ethereum/common"
+	"errors"
+
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/mantlenetworkio/mantle/mt-bindings/bindings"
 	"github.com/mantlenetworkio/mantle/mt-node/eth"
 )
 
-// ComputeL2OutputRoot computes the L2 output root
-func ComputeL2OutputRoot(l2OutputRootVersion eth.Bytes32, blockHash common.Hash, blockRoot common.Hash, storageRoot common.Hash) eth.Bytes32 {
+var NilProof = errors.New("Output root proof is nil")
+
+// ComputeL2OutputRoot computes the L2 output root by hashing an output root proof.
+func ComputeL2OutputRoot(proofElements *bindings.TypesOutputRootProof) (eth.Bytes32, error) {
+	if proofElements == nil {
+		return eth.Bytes32{}, NilProof
+	}
+
 	digest := crypto.Keccak256Hash(
-		l2OutputRootVersion[:],
-		blockRoot.Bytes(),
-		storageRoot[:],
-		blockHash.Bytes(),
+		proofElements.Version[:],
+		proofElements.StateRoot[:],
+		proofElements.MessagePasserStorageRoot[:],
+		proofElements.LatestBlockhash[:],
 	)
-	return eth.Bytes32(digest)
+	return eth.Bytes32(digest), nil
 }
 
-// HashOutputRootProof computes the hash of the output root proof
-func HashOutputRootProof(proof *bindings.TypesOutputRootProof) eth.Bytes32 {
-	return ComputeL2OutputRoot(
-		proof.Version,
-		proof.StateRoot,
-		proof.MessagePasserStorageRoot,
-		proof.LatestBlockhash,
-	)
+func ComputeL2OutputRootV0(block eth.BlockInfo, storageRoot [32]byte) (eth.Bytes32, error) {
+	var l2OutputRootVersion eth.Bytes32 // it's zero for now
+	return ComputeL2OutputRoot(&bindings.TypesOutputRootProof{
+		Version:                  l2OutputRootVersion,
+		StateRoot:                block.Root(),
+		MessagePasserStorageRoot: storageRoot,
+		LatestBlockhash:          block.Hash(),
+	})
 }

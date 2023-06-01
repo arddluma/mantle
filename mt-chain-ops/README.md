@@ -1,4 +1,4 @@
-# mt-chain-ops
+# op-chain-ops
 
 This package performs state surgery. It takes the following input:
 

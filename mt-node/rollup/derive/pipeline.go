@@ -15,6 +15,7 @@ type Metrics interface {
 	RecordL1Ref(name string, ref eth.L1BlockRef)
 	RecordL2Ref(name string, ref eth.L2BlockRef)
 	RecordUnsafePayloadsBuffer(length uint64, memSize uint64, next eth.BlockID)
+	RecordChannelInputBytes(inputCompresedBytes int)
 }
 
 type L1Fetcher interface {
@@ -50,8 +51,8 @@ type EngineQueueStage interface {
 	SetUnsafeHead(head eth.L2BlockRef)
 
 	Finalize(l1Origin eth.L1BlockRef)
-	AddSafeAttributes(attributes *eth.PayloadAttributes)
 	AddUnsafePayload(payload *eth.ExecutionPayload)
+	UnsafeL2SyncTarget() eth.L2BlockRef
 	Step(context.Context) error
 }
 
@@ -74,7 +75,7 @@ type DerivationPipeline struct {
 }
 
 // NewDerivationPipeline creates a derivation pipeline, which should be reset before use.
-func NewDerivationPipeline(log log.Logger, cfg *rollup.Config, l1Fetcher L1Fetcher, engine Engine, tp *TPClient, metrics Metrics) *DerivationPipeline {
+func NewDerivationPipeline(log log.Logger, cfg *rollup.Config, l1Fetcher L1Fetcher, engine Engine, metrics Metrics) *DerivationPipeline {
 
 	// Pull stages
 	l1Traversal := NewL1Traversal(log, cfg, l1Fetcher)
@@ -82,9 +83,9 @@ func NewDerivationPipeline(log log.Logger, cfg *rollup.Config, l1Fetcher L1Fetch
 	l1Src := NewL1Retrieval(log, dataSrc, l1Traversal)
 	frameQueue := NewFrameQueue(log, l1Src)
 	bank := NewChannelBank(log, cfg, frameQueue, l1Fetcher)
-	chInReader := NewChannelInReader(log, bank)
+	chInReader := NewChannelInReader(log, bank, metrics)
 	batchQueue := NewBatchQueue(log, cfg, chInReader)
-	attrBuilder := NewFetchingAttributesBuilder(cfg, l1Fetcher, engine, tp)
+	attrBuilder := NewFetchingAttributesBuilder(cfg, l1Fetcher, engine)
 	attributesQueue := NewAttributesQueue(log, cfg, attrBuilder, batchQueue)
 
 	// Step stages
@@ -105,6 +106,12 @@ func NewDerivationPipeline(log log.Logger, cfg *rollup.Config, l1Fetcher L1Fetch
 		metrics:   metrics,
 		traversal: l1Traversal,
 	}
+}
+
+// EngineReady returns true if the engine is ready to be used.
+// When it's being reset its state is inconsistent, and should not be used externally.
+func (dp *DerivationPipeline) EngineReady() bool {
+	return dp.resetting > 0
 }
 
 func (dp *DerivationPipeline) Reset() {
@@ -159,6 +166,11 @@ func (dp *DerivationPipeline) BuildingPayload() (onto eth.L2BlockRef, id eth.Pay
 // AddUnsafePayload schedules an execution payload to be processed, ahead of deriving it from L1
 func (dp *DerivationPipeline) AddUnsafePayload(payload *eth.ExecutionPayload) {
 	dp.eng.AddUnsafePayload(payload)
+}
+
+// UnsafeL2SyncTarget retrieves the first queued-up L2 unsafe payload, or a zeroed reference if there is none.
+func (dp *DerivationPipeline) UnsafeL2SyncTarget() eth.L2BlockRef {
+	return dp.eng.UnsafeL2SyncTarget()
 }
 
 // Step tries to progress the buffer.

@@ -1,4 +1,4 @@
-# mt-node
+# op-node
 
 This is the reference implementation of the [rollup-node spec](../specs/rollup-node.md).
 
@@ -6,21 +6,21 @@ This is the reference implementation of the [rollup-node spec](../specs/rollup-n
 
 Compile a binary:
 ```shell
-cd mt-node
-go build -o bin/mt-node ./cmd
+cd op-node
+go build -o bin/op-node ./cmd
 ```
 
 ## Testing
 
-Run mt-node unit tests:
+Run op-node unit tests:
 ```shell
-cd mt-node
+cd op-node
 go test ./...
 ```
 
 Run end-to-end tests:
 ```shell
-cd mt-e2e
+cd op-e2e
 go test ./...
 ```
 
@@ -29,7 +29,7 @@ go test ./...
 Options can be reviewed with:
 
 ```shell
-./bin/mt-node --help
+./bin/op-node --help
 ```
 
 To start syncing the rollup:
@@ -37,7 +37,7 @@ To start syncing the rollup:
 Connect to at least one L1 RPC and L2 execution engine:
 
 - L1: use any L1 node / RPC (websocket connection path may differ)
-- L2: run the Mantle fork of geth: [`mt-geth`](https://github.com/ethereum-mantle/mt-geth)
+- L2: run the Optimism fork of geth: [`op-geth`](https://github.com/ethereum-optimism/op-geth)
 
 ```shell
 # websockets or IPC preferred for event notifications to improve sync, http RPC works with adaptive polling.
@@ -50,10 +50,10 @@ op \
 
 ## Devnet Genesis Generation
 
-The `mt-node` can generate geth compatible `genesis.json` files. These files
+The `op-node` can generate geth compatible `genesis.json` files. These files
 can be used with `geth init` to initialize the `StateDB` with accounts, storage,
 code and balances. The L2 state must be initialized with predeploy contracts
-that exist in the state and act as system level contracts. The `mt-node` can
+that exist in the state and act as system level contracts. The `op-node` can
 generate a genesis file with these predeploys configured correctly given
 hardhat compilation artifacts, hardhat deployment artifacts, a L1 RPC URL
 and a deployment config.
@@ -70,13 +70,13 @@ They can usually be found in a `deployments` directory.
 The deployment config contains all of the information required to deploy the
 system. It can be found in `packages/contracts-bedrock/deploy-config`. Each
 deploy config file can be JSON or TypeScript, although only JSON files are
-supported by the `mt-node`. The network name must match the name of the file
+supported by the `op-node`. The network name must match the name of the file
 in the deploy config directory.
 
 Example usage:
 
 ```bash
-$ mt-node genesis devnet-l2 \
+$ op-node genesis devnet-l2 \
    --artifacts $CONTRACTS_BEDROCK/artifacts \
    --network $NETWORK \
    --deployments $CONTRACTS_BEDROCK/deployments \

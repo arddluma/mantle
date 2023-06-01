@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -76,7 +75,7 @@ func validateReceipts(block eth.BlockID, receiptHash common.Hash, txHashes []com
 		// Note: 3 non-consensus L1 receipt fields are ignored:
 		// PostState - not part of L1 ethereum anymore since EIP 658 (part of Byzantium)
 		// ContractAddress - we do not care about contract deployments
-		// And Mantle L1 fee meta-data in the receipt is ignored as well
+		// And Optimism L1 fee meta-data in the receipt is ignored as well
 	}
 
 	// Sanity-check: external L1-RPC sources are notorious for not returning all receipts,
@@ -373,6 +372,7 @@ func (job *receiptsFetchingJob) runFetcher(ctx context.Context) error {
 			job.txHashes,
 			makeReceiptRequest,
 			job.client.BatchCallContext,
+			job.client.CallContext,
 			job.maxBatchSize,
 		)
 	}
@@ -419,29 +419,7 @@ func (job *receiptsFetchingJob) runAltMethod(ctx context.Context, m ReceiptsFetc
 		err = job.client.CallContext(ctx, &rawReceipts, "debug_getRawReceipts", job.block.Hash)
 		if err == nil {
 			if len(rawReceipts) == len(job.txHashes) {
-				result = make([]*types.Receipt, len(rawReceipts))
-				totalIndex := uint(0)
-				prevCumulativeGasUsed := uint64(0)
-				for i, r := range rawReceipts {
-					var x types.Receipt
-					_ = x.UnmarshalBinary(r) // safe to ignore, we verify receipts against the receipts hash later
-					x.TxHash = job.txHashes[i]
-					x.BlockHash = job.block.Hash
-					x.BlockNumber = new(big.Int).SetUint64(job.block.Number)
-					x.TransactionIndex = uint(i)
-					x.GasUsed = x.CumulativeGasUsed - prevCumulativeGasUsed
-					// contract address meta-data is not computed.
-					prevCumulativeGasUsed = x.CumulativeGasUsed
-					for _, l := range x.Logs {
-						l.BlockNumber = job.block.Number
-						l.TxHash = x.TxHash
-						l.TxIndex = uint(i)
-						l.BlockHash = job.block.Hash
-						l.Index = totalIndex
-						totalIndex += 1
-					}
-					result[i] = &x
-				}
+				result, err = eth.DecodeRawReceipts(job.block, rawReceipts, job.txHashes)
 			} else {
 				err = fmt.Errorf("got %d raw receipts, but expected %d", len(rawReceipts), len(job.txHashes))
 			}

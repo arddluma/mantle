@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildMantle(t *testing.T) {
-	results, err := immutables.BuildMantle(immutables.ImmutableConfig{
+func TestBuildOptimism(t *testing.T) {
+	results, err := immutables.BuildOptimism(immutables.ImmutableConfig{
 		"L2StandardBridge": {
 			"otherBridge": common.HexToAddress("0x1234567890123456789012345678901234567890"),
 		},
@@ -21,7 +21,7 @@ func TestBuildMantle(t *testing.T) {
 			"otherBridge": common.HexToAddress("0x1234567890123456789012345678901234567890"),
 			"messenger":   common.HexToAddress("0x1234567890123456789012345678901234567890"),
 		},
-		"MantleMintableERC721Factory": {
+		"OptimismMintableERC721Factory": {
 			"remoteChainId": big.NewInt(1),
 			"bridge":        common.HexToAddress("0x1234567890123456789012345678901234567890"),
 		},
@@ -39,21 +39,21 @@ func TestBuildMantle(t *testing.T) {
 	require.NotNil(t, results)
 
 	contracts := map[string]bool{
-		"GasPriceOracle":              true,
-		"L1Block":                     true,
-		"L2CrossDomainMessenger":      true,
-		"L2StandardBridge":            true,
-		"L2ToL1MessagePasser":         true,
-		"SequencerFeeVault":           true,
-		"BaseFeeVault":                true,
-		"L1FeeVault":                  true,
-		"MantleMintableERC20Factory":  true,
-		"DeployerWhitelist":           true,
-		"LegacyMessagePasser":         true,
-		"L1BlockNumber":               true,
-		"L2ERC721Bridge":              true,
-		"MantleMintableERC721Factory": true,
-		"LegacyERC20ETH":              true,
+		"GasPriceOracle":                true,
+		"L1Block":                       true,
+		"L2CrossDomainMessenger":        true,
+		"L2StandardBridge":              true,
+		"L2ToL1MessagePasser":           true,
+		"SequencerFeeVault":             true,
+		"BaseFeeVault":                  true,
+		"L1FeeVault":                    true,
+		"OptimismMintableERC20Factory":  true,
+		"DeployerWhitelist":             true,
+		"LegacyMessagePasser":           true,
+		"L1BlockNumber":                 true,
+		"L2ERC721Bridge":                true,
+		"OptimismMintableERC721Factory": true,
+		"LegacyERC20ETH":                true,
 	}
 
 	// Only the exact contracts that we care about are being
