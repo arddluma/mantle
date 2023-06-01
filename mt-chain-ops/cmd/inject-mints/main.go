@@ -10,6 +10,8 @@ import (
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/db"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/ether"
 	"github.com/urfave/cli"
+	"github.com/schollz/progressbar/v3"
+	"github.com/mattn/go-isatty"
 )
 
 func main() {

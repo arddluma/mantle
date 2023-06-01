@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/genesis"
 	"github.com/urfave/cli"
+	"github.com/mattn/go-isatty"
 )
 
 func main() {

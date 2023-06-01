@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
+	"github.com/urfave/cli/v2"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -86,7 +89,7 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:  "optimism-portal-address",
-				Usage: "Address of the OptimismPortal on L1",
+				Usage: "Address of the MantlePortal on L1",
 			},
 			&cli.StringFlag{
 				Name:  "l1-crossdomain-messenger-address",
@@ -294,23 +297,23 @@ func main() {
 				log.Debug("LegacyMessagePasser status", "value", common.Bytes2Hex(legacyStorageValue))
 
 				// check to see if its already been proven
-				proven, err := contracts.OptimismPortal.ProvenWithdrawals(&bind.CallOpts{}, hash)
+				proven, err := contracts.MantlePortal.ProvenWithdrawals(&bind.CallOpts{}, hash)
 				if err != nil {
 					return err
 				}
 
 				// if it has not been proven, then prove it
 				if proven.Timestamp.Cmp(common.Big0) == 0 {
-					log.Info("Proving withdrawal to OptimismPortal")
+					log.Info("Proving withdrawal to MantlePortal")
 					if err := proveWithdrawalTransaction(contracts, clients, opts, withdrawal, bedrockStartingBlockNumber, period); err != nil {
 						return err
 					}
 				} else {
-					log.Info("Withdrawal already proven to OptimismPortal")
+					log.Info("Withdrawal already proven to MantlePortal")
 				}
 
 				// check to see if the withdrawal has been finalized already
-				isFinalized, err := contracts.OptimismPortal.FinalizedWithdrawals(&bind.CallOpts{}, hash)
+				isFinalized, err := contracts.MantlePortal.FinalizedWithdrawals(&bind.CallOpts{}, hash)
 				if err != nil {
 					return err
 				}
@@ -643,7 +646,7 @@ func proveWithdrawalTransaction(c *contracts, cl *util.Clients, opts *bind.Trans
 	}
 	wdTx := withdrawal.WithdrawalTransaction()
 
-	tx, err := c.OptimismPortal.ProveWithdrawalTransaction(
+	tx, err := c.MantlePortal.ProveWithdrawalTransaction(
 		opts,
 		wdTx,
 		l2OutputIndex,
@@ -699,7 +702,7 @@ func finalizeWithdrawalTransaction(
 	wdTx := withdrawal.WithdrawalTransaction()
 
 	// Finalize withdrawal
-	tx, err := c.OptimismPortal.FinalizeWithdrawalTransaction(
+	tx, err := c.MantlePortal.FinalizeWithdrawalTransaction(
 		opts,
 		wdTx,
 	)
@@ -719,7 +722,7 @@ func finalizeWithdrawalTransaction(
 
 // contracts represents a set of bound contracts
 type contracts struct {
-	OptimismPortal         *bindings.OptimismPortal
+	MantlePortal           *bindings.MantlePortal
 	L1CrossDomainMessenger *bindings.L1CrossDomainMessenger
 	L2OutputOracle         *bindings.L2OutputOracle
 }
@@ -729,11 +732,11 @@ type contracts struct {
 func newContracts(ctx *cli.Context, l1Backend, l2Backend bind.ContractBackend) (*contracts, error) {
 	optimismPortalAddress := ctx.String("optimism-portal-address")
 	if len(optimismPortalAddress) == 0 {
-		return nil, errors.New("OptimismPortal address not configured")
+		return nil, errors.New("MantlePortal address not configured")
 	}
 	optimismPortalAddr := common.HexToAddress(optimismPortalAddress)
 
-	portal, err := bindings.NewOptimismPortal(optimismPortalAddr, l1Backend)
+	portal, err := bindings.NewMantlePortal(optimismPortalAddr, l1Backend)
 	if err != nil {
 		return nil, err
 	}
@@ -766,7 +769,7 @@ func newContracts(ctx *cli.Context, l1Backend, l2Backend bind.ContractBackend) (
 	)
 
 	return &contracts{
-		OptimismPortal:         portal,
+		MantlePortal:           portal,
 		L1CrossDomainMessenger: l1CrossDomainMessenger,
 		L2OutputOracle:         oracle,
 	}, nil

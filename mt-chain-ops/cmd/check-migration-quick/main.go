@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/urfave/cli"
+	"github.com/mattn/go-isatty"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mattn/go-isatty"
+	"github.com/urfave/cli"
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/crossdomain"
 
 	"github.com/ethereum/go-ethereum/common"

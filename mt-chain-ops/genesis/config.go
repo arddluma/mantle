@@ -76,7 +76,7 @@ type DeployConfig struct {
 	ProxyAdminOwner common.Address `json:"proxyAdminOwner"`
 	// Owner of the system on L1
 	FinalSystemOwner common.Address `json:"finalSystemOwner"`
-	// GUARDIAN account in the OptimismPortal
+	// GUARDIAN account in the MantlePortal
 	PortalGuardian common.Address `json:"portalGuardian"`
 	// L1 recipient of fees accumulated in the BaseFeeVault
 	BaseFeeVaultRecipient common.Address `json:"baseFeeVaultRecipient"`
@@ -92,7 +92,7 @@ type DeployConfig struct {
 	L1ERC721BridgeProxy common.Address `json:"l1ERC721BridgeProxy"`
 	// SystemConfig proxy address on L1
 	SystemConfigProxy common.Address `json:"systemConfigProxy"`
-	// OptimismPortal proxy address on L1
+	// MantlePortal proxy address on L1
 	OptimismPortalProxy common.Address `json:"optimismPortalProxy"`
 	// The initial value of the gas overhead
 	GasPriceOracleOverhead uint64 `json:"gasPriceOracleOverhead"`

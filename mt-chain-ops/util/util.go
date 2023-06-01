@@ -121,7 +121,7 @@ var AddressesFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:    "optimism-portal-address",
-		Usage:   "OptimismPortal address",
+		Usage:   "MantlePortal address",
 		EnvVars: []string{"OPTIMISM_PORTAL_ADDRESS"},
 	},
 	&cli.StringFlag{

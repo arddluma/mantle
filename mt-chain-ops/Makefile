@@ -22,4 +22,4 @@ withdrawals:
 test:
 	go test ./...
 
-.PHONY: mt-migrate test
+.PHONY: mt-migrate eof-crawler check-migration check-migration-quick inject-mints rollover withdrawals test

@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattn/go-isatty"
+	"github.com/urfave/cli/v2"
+
 	"github.com/mantlenetworkio/mantle/mt-chain-ops/util"
 
 	"github.com/mantlenetworkio/mantle/mt-bindings/bindings"
